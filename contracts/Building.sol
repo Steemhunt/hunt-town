@@ -24,6 +24,10 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         _safeMint(to, tokenId);
     }
 
+    function nextId() external view returns (uint256) {
+        return _tokenIdCounter.current();
+    }
+
     /**
      * @dev Burns `tokenId`.
      *
@@ -38,21 +42,19 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         _burn(tokenId);
     }
 
+    function _baseURI() internal view virtual override returns (string memory) {
+        // TODO: Create API endpoint
+        // ref: https://collective.proof.xyz/token-metadata/proof-pass/metadata.json?tokenId=0
+        return "https://hunt.town/token-metadata/building.json?tokenId=";
+    }
+
     // The following functions are overrides required by Solidity.
 
-    function _beforeTokenTransfer(address from, address to, uint256 tokenId)
-        internal
-        override(ERC721, ERC721Enumerable)
-    {
+    function _beforeTokenTransfer(address from, address to, uint256 tokenId) internal override(ERC721, ERC721Enumerable) {
         super._beforeTokenTransfer(from, to, tokenId);
     }
 
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(ERC721, ERC721Enumerable)
-        returns (bool)
-    {
+    function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721Enumerable) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
 }

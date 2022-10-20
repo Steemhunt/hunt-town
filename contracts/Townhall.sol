@@ -31,7 +31,7 @@ contract Townhall is Ownable {
     /**
      * @dev Mint a new building NFT with a lock-up of HUNT tokens for 1 year
      */
-    function mint() {
+    function mint() external {
         huntToken.safeTransferFrom(msg.sender, address(this), LOCK_UP_AMOUNT);
         uint256 tokenId = building.safeMint(msg.sender);
 
@@ -41,7 +41,7 @@ contract Townhall is Ownable {
     /**
      * @dev Burn a existing building NFT and refund locked-up HUNT Tokens
      */
-    function burn(tokenId) {
+    function burn(uint256 tokenId) external {
         if (block.timestamp < buildingMintedAt[tokenId] + LOCK_UP_DURATION) revert Townhall__LockUpPeroidStillLeft();
 
         // Check approvals and burn the building NFT
