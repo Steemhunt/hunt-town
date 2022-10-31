@@ -1,5 +1,4 @@
-const { time, loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
-const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
+const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
 const { expect } = require("chai");
 
 describe("Building", function () {
@@ -11,11 +10,11 @@ describe("Building", function () {
   }
 
   let building;
-  let owner, alice, bob;
+  let owner, alice;
 
   beforeEach(async function() {
     building = await loadFixture(deployBuildingFixture);
-    [ owner, alice, bob ] = await ethers.getSigners();
+    [ owner, alice ] = await ethers.getSigners();
   });
 
   describe("Deployment", function () {
@@ -114,5 +113,5 @@ describe("Building", function () {
         );
       });
     }); // Edge Cases
-  }); // Minting
+  }); // Burning
 });
