@@ -51,7 +51,7 @@ describe("Building", function () {
     }); // Normal Flow
     describe("Edge Cases", function() {
       it("should reject if not owner", async function () {
-        expect(building.connect(alice).safeMint(owner.address)).to.be.revertedWith(
+        await expect(building.connect(alice).safeMint(owner.address)).to.be.revertedWith(
           "Ownable: caller is not the owner"
         );
       });
@@ -65,7 +65,7 @@ describe("Building", function () {
         await building.burn(0, owner.address);
       });
       it("should burn the token", async function () {
-        expect(building.ownerOf(0)).to.be.revertedWith(
+        await expect(building.ownerOf(0)).to.be.revertedWith(
           "ERC721: invalid token ID"
         );
       });
@@ -81,19 +81,19 @@ describe("Building", function () {
         await building.safeMint(owner.address);
       });
       it("should reject if the msg.sender is not owner", async function () {
-        expect(building.connect(alice).burn(0, owner.address)).to.be.revertedWith(
+        await expect(building.connect(alice).burn(0, owner.address)).to.be.revertedWith(
           "Ownable: caller is not the owner"
         );
       });
       it("should reject if the msgSender parameter is not the token holder", async function () {
-        expect(building.burn(0, alice.address)).to.be.revertedWithCustomError(
+        await expect(building.burn(0, alice.address)).to.be.revertedWithCustomError(
           building,
           "Building__NotOwnerOrApproved"
         );
       });
       it("should reject if the the token has been transferred", async function() {
         await building.transferFrom(owner.address, alice.address, 0);
-        expect(building.burn(0, owner.address)).to.be.revertedWithCustomError(
+        await expect(building.burn(0, owner.address)).to.be.revertedWithCustomError(
           building,
           "Building__NotOwnerOrApproved"
         );
@@ -101,14 +101,14 @@ describe("Building", function () {
       it("should allow owner to burn someone else's token if the msgSender is the token holder", async function() {
         await building.transferFrom(owner.address, alice.address, 0);
         await building.burn(0, alice.address);
-        expect(building.ownerOf(0)).to.be.revertedWith(
+        await expect(building.ownerOf(0)).to.be.revertedWith(
           "ERC721: invalid token ID"
         );
       });
       it("should allow owner to burn someone else's token if the msgSender has been approved", async function() {
         await building.approve(alice.address, 0);
         await building.burn(0, alice.address);
-        expect(building.ownerOf(0)).to.be.revertedWith(
+        await expect(building.ownerOf(0)).to.be.revertedWith(
           "ERC721: invalid token ID"
         );
       });
