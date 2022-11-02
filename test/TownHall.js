@@ -73,7 +73,7 @@ describe("TownHall", function () {
       });
     });
 
-    describe.only("Edge cases", function() {
+    describe("Edge cases", function() {
       it("should revert if alice does not have enough balance", async function() {
         const mintingCount = BigInt(parseInt(INITIAL_ALICE_BALANCE / LOCK_UP_AMOUNT));
         await huntToken.connect(alice).approve(townHall.address, LOCK_UP_AMOUNT * mintingCount);
