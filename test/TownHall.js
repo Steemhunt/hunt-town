@@ -31,10 +31,6 @@ describe("TownHall", function () {
   });
 
   describe("Deployment", function () {
-    it("should set the right owner", async function() {
-      expect(await townHall.owner()).to.equal(owner.address);
-    });
-
     it("should transfer buildling ownership to townHall", async function() {
       expect(await building.owner()).to.equal(townHall.address);
     });

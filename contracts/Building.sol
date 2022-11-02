@@ -44,7 +44,7 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
     function _baseURI() internal view virtual override returns (string memory) {
         // TODO: Create API endpoint
         // ref: https://collective.proof.xyz/token-metadata/proof-pass/metadata.json?tokenId=0
-        return "https://hunt.town/token-metadata/building.json?tokenId=";
+        return "https://api.hunt.town/token-metadata/building.json?tokenId=";
     }
 
     // The following functions are overrides required by Solidity.
