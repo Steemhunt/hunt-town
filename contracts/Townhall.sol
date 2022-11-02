@@ -6,8 +6,8 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./Building.sol";
 
-contract Townhall is Ownable {
-    error Townhall__LockUpPeroidStillLeft();
+contract TownHall is Ownable {
+    error TownHall__LockUpPeroidStillLeft();
 
     using SafeERC20 for IERC20;
 
@@ -38,7 +38,7 @@ contract Townhall is Ownable {
      * @dev Burn a existing building NFT and refund locked-up HUNT Tokens
      */
     function burn(uint256 tokenId) external {
-        if (block.timestamp < unlockTime(tokenId)) revert Townhall__LockUpPeroidStillLeft();
+        if (block.timestamp < unlockTime(tokenId)) revert TownHall__LockUpPeroidStillLeft();
 
         // Check approvals and burn the building NFT
         building.burn(tokenId, msg.sender);

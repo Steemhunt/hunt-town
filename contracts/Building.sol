@@ -31,7 +31,7 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
      * @dev Burns `tokenId`.
      *
      * Requirements:
-     * - Allow only the contract owner (Townhall contract) to burn the building NFT
+     * - Allow only the contract owner (TownHall contract) to burn the building NFT
      *   to prevent users accidentally burn NFT without unlocking HUNT tokens in it.
      * - The caller must own `tokenId` or be an approved operator.
      */
