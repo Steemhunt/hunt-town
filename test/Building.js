@@ -46,7 +46,7 @@ describe("Building", function () {
         expect(await building.nextId()).to.equal(1);
       });
       it("should set the correct tokenURI", async function () {
-        expect(await building.tokenURI(0)).to.equal("https://api.hunt.town/token-metadata/building.json?tokenId=0");
+        expect(await building.tokenURI(0)).to.equal("https://api.hunt.town/token-metadata/buildings/0.json");
       });
     }); // Normal Flow
     describe("Edge Cases", function() {
