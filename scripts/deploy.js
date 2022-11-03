@@ -1,25 +1,56 @@
 const hre = require("hardhat");
 
 async function main() {
-  // const currentTimestampInSeconds = Math.round(Date.now() / 1000);
-  // const ONE_YEAR_IN_SECS = 365 * 24 * 60 * 60;
-  // const unlockTime = currentTimestampInSeconds + ONE_YEAR_IN_SECS;
+  const accounts = await hre.ethers.getSigners();
+  const deployer = accounts[0].address;
+  console.log(`Deploy from account: ${deployer}`);
 
-  // const lockedAmount = hre.ethers.utils.parseEther("1");
+  let huntAddress = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5";
+  if (hre.network.name === "goerli") {
+    const HuntTokenMock = await hre.ethers.getContractFactory('HuntTokenMock');
+    const token = await HuntTokenMock.deploy();
+    await token.deployed();
 
-  // const Lock = await hre.ethers.getContractFactory("Lock");
-  // const lock = await Lock.deploy(unlockTime, { value: lockedAmount });
+    huntAddress = token.address;
+    console.log(` -> Test HUNT token contract deployed at ${huntAddress}`);
+  }
 
-  // await lock.deployed();
+  console.log(`HUNT token address: ${huntAddress}`);
 
-  // console.log(
-  //   `Lock with 1 ETH and unlock timestamp ${unlockTime} deployed to ${lock.address}`
-  // );
-}
+  const Building = await hre.ethers.getContractFactory('Building');
+  const building = await Building.deploy();
+  await building.deployed();
+  console.log(` -> Building contract deployed at ${building.address}`);
 
-// We recommend this pattern to be able to use async/await everywhere
-// and properly handle errors.
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+  const TownHall = await hre.ethers.getContractFactory('TownHall');
+  const townHall = await TownHall.deploy(building.address, huntAddress);
+  await townHall.deployed();
+  console.log(` -> TownHall contract deployed at ${townHall.address}`);
+
+  console.log(`\n\nNetwork: ${hre.network.name}`);
+  console.log('```');
+  console.log(`- TownHall: ${townHall.address}`);
+  console.log(`- Building: ${building.address}`);
+  console.log(`- HUNT: ${huntAddress}`);
+  console.log('```');
+
+  console.log(`
+    npx hardhat verify --network ${hre.network.name} ${building.address}
+    npx hardhat verify --network ${hre.network.name} ${townHall.address} '${building.address}' '${huntAddress}'
+  `);
+};
+
+main()
+  .then(() => process.exit(0))
+  .catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+
+
+/* Deploy script
+
+npx hardhat compile && npx hardhat run --network goerli scripts/deploy.js
+npx hardhat compile && npx hardhat run --network ethmain scripts/deploy.js
+
+*/

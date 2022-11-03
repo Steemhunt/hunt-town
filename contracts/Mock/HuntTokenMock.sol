@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract HuntTokenMock is ERC20, ERC20Burnable, Ownable {
-    constructor() ERC20("HuntToken", "HUNT") {
+    constructor() ERC20("TestHuntToken", "TEST_HUNT") {
         _mint(msg.sender, 198912688 * 10 ** decimals());
     }
 
