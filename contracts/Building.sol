@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "./ITownHall.sol";
 
 // @custom:security-contact admin@hunt.town
 contract Building is ERC721, ERC721Enumerable, Ownable {
@@ -53,6 +54,11 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         _requireMinted(tokenId);
 
         return string(abi.encodePacked(_baseURI(), tokenId.toString(), ".json"));
+    }
+
+    // Utility wrapper function that calls TownHall's unlockTime function
+    function unlockTime(uint256 tokenId) external view returns (uint256) {
+        return ITownHall(owner()).unlockTime(tokenId);
     }
 
     // The following functions are overrides required by Solidity.

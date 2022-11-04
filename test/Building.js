@@ -48,6 +48,9 @@ describe("Building", function () {
       it("should set the correct tokenURI", async function () {
         expect(await building.tokenURI(0)).to.equal("https://api.hunt.town/token-metadata/buildings/0.json");
       });
+      it("should revert on unlockTime if the ownership has not transferred to TownHall", async function() {
+        await expect(building.unlockTime(0)).to.be.reverted;
+      });
     }); // Normal Flow
     describe("Edge Cases", function() {
       it("should reject if not owner", async function () {

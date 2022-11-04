@@ -60,6 +60,10 @@ describe("TownHall", function () {
         expect(await townHall.unlockTime(0)).to.equal(BigInt(await time.latest()) + LOCK_UP_DURATION);
       });
 
+      it("should also be able to call unlockTime from building contract", async function() {
+        expect(await building.unlockTime(0)).to.equal(await townHall.unlockTime(0));
+      });
+
       it("should decrease Alice's balance by LOCK_UP_AMOUNT", async function() {
         expect(await huntToken.balanceOf(alice.address)).to.equal(INITIAL_ALICE_BALANCE - LOCK_UP_AMOUNT);
       });

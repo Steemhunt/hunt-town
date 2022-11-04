@@ -14,7 +14,10 @@ contract TownHall {
     IERC20 public huntToken;
 
     uint256 public constant LOCK_UP_AMOUNT = 1e21; // 1,000 HUNT per NFT minting
-    uint256 public constant LOCK_UP_DURATION = 31536000; // 365 days in seconds
+    // uint256 public constant LOCK_UP_DURATION = 31536000; // 365 days in seconds
+
+    // TEMP: for testing
+    uint256 public constant LOCK_UP_DURATION = 600; // 10 minutes
 
     mapping (uint256 => uint256) public buildingMintedAt;
 
