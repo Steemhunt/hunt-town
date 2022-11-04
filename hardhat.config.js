@@ -17,15 +17,16 @@ module.exports = {
     goerli: {
       url: `https://eth-goerli.alchemyapi.io/v2/${process.env.ALCHEMY_GOERLI_API_KEY}`,
       chainId: 5,
-      gasPrice: 5000000000, // 5 gwei
-      blockGasLimit: 29000000, // 29M
+      accounts: [process.env.GOERLI_TEST_PRIVATE_KEY]
+    },
+    polygonmain: {
+      url: `https://polygon-rpc.com/`,
+      chainId: 137,
       accounts: [process.env.GOERLI_TEST_PRIVATE_KEY]
     },
     ethmain: {
       url: `https://eth-mainnet.alchemyapi.io/v2/${process.env.ALCHEMY_ETH_API_KEY}`,
       chainId: 1,
-      gasPrice: 14000000000, // 14 gwei
-      blockGasLimit: 29000000, // 29M
       accounts: [process.env.ETH_PRIVATE_KEY]
     }
   },
@@ -39,7 +40,8 @@ module.exports = {
     // network list: https://github.com/NomicFoundation/hardhat/blob/master/packages/hardhat-etherscan/src/ChainConfig.ts
     apiKey: {
       goerli: process.env.ETHERSCAN_API_KEY,
-      mainnet: process.env.ETHERSCAN_API_KEY
+      mainnet: process.env.ETHERSCAN_API_KEY,
+      polygon: process.env.POLYGONSCAN_API_KEY
     }
   }
 };

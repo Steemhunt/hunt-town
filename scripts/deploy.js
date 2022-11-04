@@ -6,13 +6,15 @@ async function main() {
   console.log(`Deploy from account: ${deployer}`);
 
   let huntAddress = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5";
-  if (hre.network.name === "goerli") {
+  if (hre.network.name === "goerli" || hre.network.name === "polygonmain") {
     const HuntTokenMock = await hre.ethers.getContractFactory('HuntTokenMock');
     const token = await HuntTokenMock.deploy();
     await token.deployed();
 
     huntAddress = token.address;
     console.log(` -> Test HUNT token contract deployed at ${huntAddress}`);
+
+    // huntAddress = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5"; // Use an existing one
   }
 
   console.log(`HUNT token address: ${huntAddress}`);
@@ -50,7 +52,6 @@ main()
 
 /* Deploy script
 
-npx hardhat compile && npx hardhat run --network goerli scripts/deploy.js
-npx hardhat compile && npx hardhat run --network ethmain scripts/deploy.js
+npx hardhat compile && npx hardhat run --network polygonmain scripts/deploy.js
 
 */
