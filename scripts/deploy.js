@@ -7,14 +7,14 @@ async function main() {
 
   let huntAddress = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5";
   if (hre.network.name === "goerli" || hre.network.name === "polygonmain") {
-    const HuntTokenMock = await hre.ethers.getContractFactory('HuntTokenMock');
-    const token = await HuntTokenMock.deploy();
-    await token.deployed();
+    // const HuntTokenMock = await hre.ethers.getContractFactory('HuntTokenMock');
+    // const token = await HuntTokenMock.deploy();
+    // await token.deployed();
 
-    huntAddress = token.address;
-    console.log(` -> Test HUNT token contract deployed at ${huntAddress}`);
+    // huntAddress = token.address;
+    // console.log(` -> Test HUNT token contract deployed at ${huntAddress}`);
 
-    // huntAddress = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5"; // Use an existing one
+    huntAddress = "0x4bF67e5C9baD43DD89dbe8fCAD3c213C868fe881"; // Use an existing one
   }
 
   console.log(`HUNT token address: ${huntAddress}`);
@@ -29,6 +29,9 @@ async function main() {
   await townHall.deployed();
   console.log(` -> TownHall contract deployed at ${townHall.address}`);
 
+  await building.transferOwnership(townHall.address);
+  console.log(` -> Building ownership is transferred to Townhall`);
+
   console.log(`\n\nNetwork: ${hre.network.name}`);
   console.log('```');
   console.log(`- TownHall: ${townHall.address}`);
@@ -37,6 +40,7 @@ async function main() {
   console.log('```');
 
   console.log(`
+    npx hardhat verify --network ${hre.network.name} ${huntAddress}
     npx hardhat verify --network ${hre.network.name} ${building.address}
     npx hardhat verify --network ${hre.network.name} ${townHall.address} '${building.address}' '${huntAddress}'
   `);
