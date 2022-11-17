@@ -44,8 +44,6 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         _burn(tokenId);
     }
 
-    // TODO: Create API endpoint
-    // ref: https://collective.proof.xyz/token-metadata/proof-pass/metadata.json?tokenId=0
     function _baseURI() internal view virtual override returns (string memory) {
         return "https://api.hunt.town/token-metadata/buildings/";
     }
