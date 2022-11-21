@@ -44,6 +44,10 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         _burn(tokenId);
     }
 
+    function contractURI() public view returns (string memory) {
+        return "https://api.hunt.town/token-metadata/buildings.json";
+    }
+
     function _baseURI() internal view virtual override returns (string memory) {
         return "https://api.hunt.town/token-metadata/buildings/";
     }
