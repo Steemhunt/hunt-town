@@ -5,6 +5,10 @@ async function main() {
   const deployer = accounts[0].address;
   console.log(`Deploy from account: ${deployer}`);
 
+  const latestBlock = await hre.ethers.provider.getBlock("latest");
+  const nonce = await hre.ethers.provider.getTransactionCount(deployer, "latest");
+  console.log(`Latest Block: ${latestBlock.number} / Nonce: ${nonce}`);
+
   let huntAddress = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5";
   if (hre.network.name === "goerli" || hre.network.name === "polygonmain") {
     // const HuntTokenMock = await hre.ethers.getContractFactory('HuntTokenMock');
@@ -19,17 +23,26 @@ async function main() {
 
   console.log(`HUNT token address: ${huntAddress}`);
 
+
   const Building = await hre.ethers.getContractFactory('Building');
-  const building = await Building.deploy();
+  const building = await Building.deploy({ nonce: nonce });
+  console.log(`  -> Deploying Building contract`);
+  console.log(`     - hash: ${building.deployTransaction.hash}`);
+  console.log(`     - gasPrice: ${building.deployTransaction.gasPrice / 1e9}`);
+  console.log(`     - nonce: ${building.deployTransaction.nonce}`);
   await building.deployed();
   console.log(` -> Building contract deployed at ${building.address}`);
 
   const TownHall = await hre.ethers.getContractFactory('TownHall');
-  const townHall = await TownHall.deploy(building.address, huntAddress);
+  const townHall = await TownHall.deploy(building.address, huntAddress, { nonce: nonce + 1 });
+  console.log(`  -> Deploying Townhall contract`);
+  console.log(`     - hash: ${townHall.deployTransaction.hash}`);
+  console.log(`     - gasPrice: ${townHall.deployTransaction.gasPrice / 1e9}`);
+  console.log(`     - nonce: ${townHall.deployTransaction.nonce}`);
   await townHall.deployed();
   console.log(` -> TownHall contract deployed at ${townHall.address}`);
 
-  await building.transferOwnership(townHall.address);
+  await building.transferOwnership(townHall.address, { nonce: nonce + 2 });
   console.log(` -> Building ownership is transferred to Townhall`);
 
   console.log(`\n\nNetwork: ${hre.network.name}`);

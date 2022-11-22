@@ -22,6 +22,7 @@ module.exports = {
     polygonmain: {
       url: `https://polygon-rpc.com/`,
       chainId: 137,
+      // gasPrice: 50000000000, // 50 GWei
       accounts: [process.env.GOERLI_TEST_PRIVATE_KEY]
     },
     ethmain: {
