@@ -51,7 +51,7 @@ contract TownHall {
     }
 
     function unlockTime(uint256 tokenId) public view returns (uint256) {
-        if(!buildling.exists(tokenId)) revert TownHall__InvalidTokenId();
+        if(!building.exists(tokenId)) revert TownHall__InvalidTokenId();
 
         return buildingMintedAt[tokenId] + LOCK_UP_DURATION;
     }
