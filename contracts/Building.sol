@@ -58,6 +58,10 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         return string(abi.encodePacked(_baseURI(), tokenId.toString(), ".json"));
     }
 
+    function exists(uint256 tokenId) external view returns (bool) {
+        return _exists(tokenId);
+    }
+
     // Utility wrapper function that calls TownHall's unlockTime function
     function unlockTime(uint256 tokenId) external view returns (uint256) {
         return ITownHall(owner()).unlockTime(tokenId);
