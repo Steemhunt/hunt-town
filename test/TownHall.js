@@ -52,8 +52,8 @@ describe("TownHall", function () {
         expect(await building.ownerOf(0)).to.equal(alice.address);
       });
 
-      it("should set correct buildingMintedAt timestamp", async function() {
-        expect(await townHall.buildingMintedAt(0)).to.equal(await time.latest());
+      it("should set correct mintedAt timestamp", async function() {
+        expect(await townHall.mintedAt(0)).to.equal(await time.latest());
       });
 
       it("should return correct unlockTime", async function() {
@@ -70,6 +70,15 @@ describe("TownHall", function () {
 
       it("should increase TownHall's balance by LOCK_UP_AMOUNT", async function() {
         expect(await huntToken.balanceOf(townHall.address)).to.equal(LOCK_UP_AMOUNT);
+      });
+
+      it("should emit Mint event", async function() {
+        await huntToken.connect(alice).approve(townHall.address, LOCK_UP_AMOUNT);
+
+        const nextBlockTimestamp = BigInt(await time.latest()) + 10n;
+        await time.setNextBlockTimestamp(nextBlockTimestamp); // set the timestamp of the next block but don't mine a new block
+
+        await expect(townHall.connect(alice).mint()).emit(townHall, "Mint").withArgs(alice.address, 1, nextBlockTimestamp);
       });
     });
 
@@ -91,6 +100,14 @@ describe("TownHall", function () {
         // one more try should fail
         await expect(townHall.connect(alice).mint()).to.be.revertedWith("ERC20: insufficient allowance");
       });
+
+      it("should revert on mintedAt if the token hasn't minted", async function() {
+        await expect(townHall.mintedAt(0)).to.be.revertedWithCustomError(townHall, "TownHall__InvalidTokenId");
+      });
+
+      it("should revert on unlockTime if the token hasn't minted", async function() {
+        await expect(townHall.unlockTime(0)).to.be.revertedWithCustomError(townHall, "TownHall__InvalidTokenId");
+      });
     });
   });
 
@@ -98,6 +115,15 @@ describe("TownHall", function () {
     beforeEach(async function() {
       await huntToken.connect(alice).approve(townHall.address, LOCK_UP_AMOUNT);
       await townHall.connect(alice).mint();
+    });
+
+    it("should emit Burn event", async function() {
+      await time.increaseTo(await townHall.unlockTime(0));
+
+      const nextBlockTimestamp = BigInt(await time.latest()) + 10n;
+      await time.setNextBlockTimestamp(nextBlockTimestamp); // set the timestamp of the next block but don't mine a new block
+
+      await expect(townHall.connect(alice).burn(0)).emit(townHall, "Burn").withArgs(alice.address, 0, nextBlockTimestamp);
     });
 
     describe("Normal cases", async function() {

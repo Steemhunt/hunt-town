@@ -20,7 +20,10 @@ contract TownHall {
     // TEMP: for testing
     uint256 public constant LOCK_UP_DURATION = 600; // 10 minutes
 
-    mapping (uint256 => uint256) public buildingMintedAt;
+    mapping (uint256 => uint256) private buildingMintedAt;
+
+    event Mint(address indexed caller, uint256 indexed tokenId, uint256 timestamp);
+    event Burn(address indexed caller, uint256 indexed tokenId, uint256 timestamp);
 
     constructor(address building_, address huntToken_) {
         building = Building(building_);
@@ -35,6 +38,8 @@ contract TownHall {
         uint256 tokenId = building.safeMint(msg.sender);
 
         buildingMintedAt[tokenId] = block.timestamp;
+
+        emit Mint(msg.sender, tokenId, block.timestamp);
     }
 
     /**
@@ -48,6 +53,14 @@ contract TownHall {
 
         // Refund locked-up HUNT tokens
         huntToken.safeTransfer(msg.sender, LOCK_UP_AMOUNT);
+
+        emit Burn(msg.sender, tokenId, block.timestamp);
+    }
+
+    function mintedAt(uint256 tokenId) external view returns (uint256) {
+        if(!building.exists(tokenId)) revert TownHall__InvalidTokenId();
+
+        return buildingMintedAt[tokenId];
     }
 
     function unlockTime(uint256 tokenId) public view returns (uint256) {
