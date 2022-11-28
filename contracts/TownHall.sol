@@ -22,7 +22,7 @@ contract TownHall {
 
     mapping (uint256 => uint256) private buildingMintedAt;
 
-    event Mint(address indexed caller, uint256 indexed tokenId, uint256 timestamp);
+    event Mint(address indexed to, uint256 indexed tokenId, uint256 timestamp);
     event Burn(address indexed caller, uint256 indexed tokenId, uint256 timestamp);
 
     constructor(address building_, address huntToken_) {
@@ -33,13 +33,13 @@ contract TownHall {
     /**
      * @dev Mint a new building NFT with a lock-up of HUNT tokens for 1 year
      */
-    function mint() external {
+    function mint(address to) external {
         huntToken.safeTransferFrom(msg.sender, address(this), LOCK_UP_AMOUNT);
-        uint256 tokenId = building.safeMint(msg.sender);
+        uint256 tokenId = building.safeMint(to);
 
         buildingMintedAt[tokenId] = block.timestamp;
 
-        emit Mint(msg.sender, tokenId, block.timestamp);
+        emit Mint(to, tokenId, block.timestamp);
     }
 
     /**

@@ -44,7 +44,7 @@ describe("TownHall", function () {
     describe("Normal cases", async function() {
       beforeEach(async function() {
         await huntToken.connect(alice).approve(townHall.address, LOCK_UP_AMOUNT);
-        await townHall.connect(alice).mint();
+        await townHall.connect(alice).mint(alice.address);
       });
 
       it("should create a building NFT and send it to alice", async function() {
@@ -78,7 +78,7 @@ describe("TownHall", function () {
         const nextBlockTimestamp = BigInt(await time.latest()) + 10n;
         await time.setNextBlockTimestamp(nextBlockTimestamp); // set the timestamp of the next block but don't mine a new block
 
-        await expect(townHall.connect(alice).mint()).emit(townHall, "Mint").withArgs(alice.address, 1, nextBlockTimestamp);
+        await expect(townHall.connect(alice).mint(alice.address)).emit(townHall, "Mint").withArgs(alice.address, 1, nextBlockTimestamp);
       });
     });
 
@@ -88,7 +88,7 @@ describe("TownHall", function () {
         await huntToken.connect(alice).approve(townHall.address, LOCK_UP_AMOUNT * mintingCount);
 
         for(let i = 0; i < mintingCount; i++) {
-          await townHall.connect(alice).mint();
+          await townHall.connect(alice).mint(alice.address);
         }
 
         // NFT count
@@ -98,7 +98,18 @@ describe("TownHall", function () {
         expect(await huntToken.balanceOf(alice.address)).to.equal(INITIAL_ALICE_BALANCE - LOCK_UP_AMOUNT * mintingCount);
 
         // one more try should fail
-        await expect(townHall.connect(alice).mint()).to.be.revertedWith("ERC20: insufficient allowance");
+        await expect(townHall.connect(alice).mint(alice.address)).to.be.revertedWith("ERC20: insufficient allowance");
+      });
+
+      it("should be able to mint the NFT to a different address", async function() {
+        await huntToken.connect(alice).approve(townHall.address, LOCK_UP_AMOUNT);
+        await townHall.connect(alice).mint(bob.address);
+
+        expect(await building.balanceOf(alice.address)).to.equal(0);
+        expect(await building.balanceOf(bob.address)).to.equal(1);
+
+        // Deduct HUNT tokens from caller, not the receiver
+        expect(await huntToken.balanceOf(alice.address)).to.equal(INITIAL_ALICE_BALANCE - LOCK_UP_AMOUNT);
       });
 
       it("should revert on mintedAt if the token hasn't minted", async function() {
@@ -114,7 +125,7 @@ describe("TownHall", function () {
   describe("Burn", function () {
     beforeEach(async function() {
       await huntToken.connect(alice).approve(townHall.address, LOCK_UP_AMOUNT);
-      await townHall.connect(alice).mint();
+      await townHall.connect(alice).mint(alice.address);
     });
 
     it("should emit Burn event", async function() {
