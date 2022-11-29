@@ -17,7 +17,7 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
 
     Counters.Counter private _tokenIdCounter;
 
-    constructor() ERC721("HT Building TEST", "BUILDING") {}
+    constructor() ERC721("HUNT Building", "HUNT_BUILDING") {}
 
     function safeMint(address to) external onlyOwner returns(uint256 tokenId) {
         tokenId = _tokenIdCounter.current();
