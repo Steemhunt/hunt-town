@@ -70,5 +70,6 @@ main()
 /* Deploy script
 
 npx hardhat compile && npx hardhat run --network polygonmain scripts/deploy.js
+npx hardhat compile && npx hardhat run --network ethmain scripts/deploy.js
 
 */
