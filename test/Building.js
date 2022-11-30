@@ -15,6 +15,7 @@ describe("Building", function () {
   beforeEach(async function() {
     building = await loadFixture(deployBuildingFixture);
     [ owner, alice ] = await ethers.getSigners();
+    await building.setTownHall(owner.address); // Set TownHall as deployer for testing purpose
   });
 
   describe("Deployment", function () {
@@ -58,9 +59,16 @@ describe("Building", function () {
       });
     }); // Normal Flow
     describe("Edge Cases", function() {
+      it("should not possible to overwrite the TownHall address once it's initialized", async function() {
+        await expect(building.setTownHall(alice.address)).to.be.revertedWithCustomError(
+          building,
+          "Building__CannotChangeTownHallAddress"
+        );
+      });
       it("should reject if not owner", async function () {
-        await expect(building.connect(alice).safeMint(owner.address)).to.be.revertedWith(
-          "Ownable: caller is not the owner"
+        await expect(building.connect(alice).safeMint(owner.address)).to.be.revertedWithCustomError(
+          building,
+          "Building__CallerIsNotTownHall"
         );
       });
     }); // Edge Cases
@@ -89,8 +97,9 @@ describe("Building", function () {
         await building.safeMint(owner.address);
       });
       it("should reject if the msg.sender is not owner", async function () {
-        await expect(building.connect(alice).burn(0, owner.address)).to.be.revertedWith(
-          "Ownable: caller is not the owner"
+        await expect(building.connect(alice).burn(0, owner.address)).to.be.revertedWithCustomError(
+          building,
+          "Building__CallerIsNotTownHall"
         );
       });
       it("should reject if the msgSender parameter is not the token holder", async function () {

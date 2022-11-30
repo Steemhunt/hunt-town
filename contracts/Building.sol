@@ -12,21 +12,39 @@ import "./ITownHall.sol";
 // @custom:security-contact admin@hunt.town
 contract Building is ERC721, ERC721Enumerable, Ownable {
     error Building__NotOwnerOrApproved();
+    error Building__CallerIsNotTownHall();
+    error Building__CannotChangeTownHallAddress();
 
     using Strings for uint256;
     using Counters for Counters.Counter;
 
     Counters.Counter private _tokenIdCounter;
+    address public townHall;
 
-    constructor() ERC721("HUNT Building", "HUNT_BUILDING") {}
+    constructor() ERC721("TEST HUNT Building", "TEST_HUNT_BUILDING") {}
+
+    modifier onlyTownHall() {
+        if(townHall != msg.sender) revert Building__CallerIsNotTownHall();
+        _;
+    }
+
+    /**
+     * @dev Set TownHall address once it's deployed
+     * - Once it's assigned, the address cannot be changed even by the contract owner
+     */
+    function setTownHall(address _townHall) external onlyOwner {
+        if (townHall != address(0)) revert Building__CannotChangeTownHallAddress();
+
+        townHall = _townHall;
+    }
 
     /**
      * @dev Mint a new Building NFT
      *
      * Requirements:
-     * - Only the contract owner (TownHall contract) can mint a new building NFT with the token lock-up requirement.
+     * - Only Town Hall contract can mint a new building NFT with the token lock-up requirement.
      */
-    function safeMint(address to) external onlyOwner returns(uint256 tokenId) {
+    function safeMint(address to) external onlyTownHall returns(uint256 tokenId) {
         tokenId = _tokenIdCounter.current();
         _tokenIdCounter.increment();
 
@@ -37,11 +55,10 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
      * @dev Burns `tokenId`.
      *
      * Requirements:
-     * - Only the contract owner (TownHall contract) can burn the building NFT
-     *   to prevent users accidentally burn thier NFTs without unlocking HUNT tokens in it.
+     * - Only Town Hall contract can burn the building NFT to prevent users from accidentally burning thier NFTs without unlocking their HUNT tokens.
      * - The caller must own `tokenId` or be an approved operator.
      */
-    function burn(uint256 tokenId, address msgSender) external onlyOwner {
+    function burn(uint256 tokenId, address msgSender) external onlyTownHall {
         if(!_isApprovedOrOwner(msgSender, tokenId)) revert Building__NotOwnerOrApproved();
 
         _burn(tokenId);
@@ -75,7 +92,7 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
 
     // Utility wrapper function that calls TownHall's unlockTime function
     function unlockTime(uint256 tokenId) external view returns (uint256) {
-        return ITownHall(owner()).unlockTime(tokenId);
+        return ITownHall(townHall).unlockTime(tokenId);
     }
 
     // The following functions are overrides required by Solidity.

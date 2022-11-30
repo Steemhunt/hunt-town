@@ -42,8 +42,8 @@ async function main() {
   await townHall.deployed();
   console.log(` -> TownHall contract deployed at ${townHall.address}`);
 
-  await building.transferOwnership(townHall.address, { nonce: nonce + 2 });
-  console.log(` -> Building ownership is transferred to Townhall`);
+  await building.setTownHall(townHall.address, { nonce: nonce + 2 });
+  console.log(` -> TownHall address is assigned on Building NFT`);
 
   console.log(`\n\nNetwork: ${hre.network.name}`);
   console.log('```');

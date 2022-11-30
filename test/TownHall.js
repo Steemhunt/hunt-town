@@ -12,7 +12,7 @@ describe("TownHall", function () {
     const TownHall = await ethers.getContractFactory("TownHall");
     const townHall = await TownHall.deploy(building.address, huntToken.address);
 
-    await building.transferOwnership(townHall.address);
+    await building.setTownHall(townHall.address);
 
     return [ townHall, building, huntToken ];
   }
@@ -31,8 +31,8 @@ describe("TownHall", function () {
   });
 
   describe("Deployment", function () {
-    it("should transfer buildling ownership to townHall", async function() {
-      expect(await building.owner()).to.equal(townHall.address);
+    it("should set the Town Hall address correctly", async function() {
+      expect(await building.townHall()).to.equal(townHall.address);
     });
 
     it("alice should have initial token balance", async function() {
