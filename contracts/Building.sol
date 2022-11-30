@@ -3,7 +3,6 @@ pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
-import "@openzeppelin/contracts/interfaces/IERC2981.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
@@ -21,7 +20,7 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
     Counters.Counter private _tokenIdCounter;
     address public townHall;
 
-    constructor() ERC721("TEST HUNT Building", "TEST_HUNT_BUILDING") {}
+    constructor() ERC721("HUNT Building", "HUNT_BUILDING") {}
 
     modifier onlyTownHall() {
         if(townHall != msg.sender) revert Building__CallerIsNotTownHall();
@@ -104,17 +103,6 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
     // MARK: - Override extensions
 
     function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721Enumerable) returns (bool) {
-        return interfaceId == type(IERC2981).interfaceId || super.supportsInterface(interfaceId);
-    }
-
-    /**
-     * @dev IERC2981 - NFT Royalty Standard
-     * Opensea won't enforce creator fees on collections without `operator-filter-registry` after 2022-11-08
-     *
-     *  - Ref: https://support.opensea.io/hc/en-us/articles/1500009575482
-     *  - Ref: https://github.com/ProjectOpenSea/operator-filter-registry
-     */
-    function royaltyInfo(uint256 /*_tokenId*/, uint256 _salePrice) public view returns (address, uint256) {
-        return (owner(), (_salePrice * 500) / 10000);
+        return super.supportsInterface(interfaceId);
     }
 }
