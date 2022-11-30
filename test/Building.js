@@ -51,6 +51,11 @@ describe("Building", function () {
       it("should revert on unlockTime if the ownership has not transferred to TownHall", async function() {
         await expect(building.unlockTime(0)).to.be.reverted;
       });
+      it("should have correct royalty info", async function() {
+        const info = await building.royaltyInfo("0", "100");
+        expect(info[0]).to.equal(owner.address); // collection creator
+        expect(info[1]).to.equal("5"); // 5%
+      });
     }); // Normal Flow
     describe("Edge Cases", function() {
       it("should reject if not owner", async function () {

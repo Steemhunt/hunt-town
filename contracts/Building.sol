@@ -3,6 +3,7 @@ pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/interfaces/IERC2981.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
@@ -19,6 +20,12 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
 
     constructor() ERC721("HUNT Building", "HUNT_BUILDING") {}
 
+    /**
+     * @dev Mint a new Building NFT
+     *
+     * Requirements:
+     * - Only the contract owner (TownHall contract) can mint a new building NFT with the token lock-up requirement.
+     */
     function safeMint(address to) external onlyOwner returns(uint256 tokenId) {
         tokenId = _tokenIdCounter.current();
         _tokenIdCounter.increment();
@@ -26,16 +33,12 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         _safeMint(to, tokenId);
     }
 
-    function nextId() external view returns (uint256) {
-        return _tokenIdCounter.current();
-    }
-
     /**
      * @dev Burns `tokenId`.
      *
      * Requirements:
-     * - Allow only the contract owner (TownHall contract) to burn the building NFT
-     *   to prevent users accidentally burn NFT without unlocking HUNT tokens in it.
+     * - Only the contract owner (TownHall contract) can burn the building NFT
+     *   to prevent users accidentally burn thier NFTs without unlocking HUNT tokens in it.
      * - The caller must own `tokenId` or be an approved operator.
      */
     function burn(uint256 tokenId, address msgSender) external onlyOwner {
@@ -44,6 +47,10 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         _burn(tokenId);
     }
 
+    /**
+     * @dev Contract-level metadata
+     *  - Ref: https://docs.opensea.io/docs/contract-level-metadata
+     */
     function contractURI() public pure returns (string memory) {
         return "https://api.hunt.town/token-metadata/buildings.json";
     }
@@ -56,6 +63,10 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         _requireMinted(tokenId);
 
         return string(abi.encodePacked(_baseURI(), tokenId.toString(), ".json"));
+    }
+
+    function nextId() external view returns (uint256) {
+        return _tokenIdCounter.current();
     }
 
     function exists(uint256 tokenId) external view returns (bool) {
@@ -73,7 +84,20 @@ contract Building is ERC721, ERC721Enumerable, Ownable {
         super._beforeTokenTransfer(from, to, tokenId);
     }
 
+    // MARK: - Override extensions
+
     function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721Enumerable) returns (bool) {
-        return super.supportsInterface(interfaceId);
+        return interfaceId == type(IERC2981).interfaceId || super.supportsInterface(interfaceId);
+    }
+
+    /**
+     * @dev IERC2981 - NFT Royalty Standard
+     * Opensea won't enforce creator fees on collections without `operator-filter-registry` after 2022-11-08
+     *
+     *  - Ref: https://support.opensea.io/hc/en-us/articles/1500009575482
+     *  - Ref: https://github.com/ProjectOpenSea/operator-filter-registry
+     */
+    function royaltyInfo(uint256 /*_tokenId*/, uint256 _salePrice) public view returns (address, uint256) {
+        return (owner(), (_salePrice * 500) / 10000);
     }
 }
