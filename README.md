@@ -3,6 +3,7 @@ Hunt Town is a web3 builders' guild where builders come together to contribute t
 
 ## 📄 Contracts
 - Building.sol: A NFT with ERC721 interface, that can only be minted by locking-up 1,000 HUNT tokens on the TownHall contract for 1 year.
+  - Locked-up tokens are returned when the NFT gets burned after the lock-up period
   - Building NFT is a membership pass required to enter the Hunt Town Discord group
   - Members with verified Building NFTs will receive BUILD points in the Hunt Town Discord group everyday
 - TownHall.sol: A front facing contract that mints / burns Building NFTs.
