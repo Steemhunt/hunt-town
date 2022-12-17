@@ -1,6 +1,6 @@
 {
   "name": "Hunt Town",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Web3 Builders Town",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^2.0.0",
