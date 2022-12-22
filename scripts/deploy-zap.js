@@ -16,7 +16,7 @@ async function main() {
   console.log(`TownHall address: ${townHallAddress}`);
 
   const TownHallZap = await hre.ethers.getContractFactory('TownHallZap');
-  const zap = await TownHallZap.deploy(townHall.address, huntAddress, { nonce: nonce });
+  const zap = await TownHallZap.deploy(townHallAddress, huntAddress, { nonce: nonce });
   console.log(`  -> Deploying TownHallZap contract`);
   console.log(`     - hash: ${zap.deployTransaction.hash}`);
   console.log(`     - gasPrice: ${zap.deployTransaction.gasPrice / 1e9}`);
