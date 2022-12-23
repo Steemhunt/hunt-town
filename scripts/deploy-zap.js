@@ -30,7 +30,7 @@ async function main() {
   console.log('```');
 
   console.log(`
-    npx hardhat verify --network ${hre.network.name} ${zap.address} '${townHall.address}' '${huntAddress}'
+    npx hardhat verify --network ${hre.network.name} ${zap.address} '${townHallAddress}' '${huntAddress}'
   `);
 };
 
