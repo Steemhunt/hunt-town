@@ -12,6 +12,12 @@ async function main() {
   let huntAddress = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5";
   let townHallAddress = "0xb09A1410cF4C49F92482F5cd2CbF19b638907193";
 
+  // For testnet
+  if (hre.network.name === "goerli" || hre.network.name === "polygonmain") {
+    huntAddress = "0x4bF67e5C9baD43DD89dbe8fCAD3c213C868fe881";
+    townHallAddress = "0x794B9BC9c7316487D9fb31B6eEB8b9b57d958c3D";
+  }
+
   console.log(`HUNT token address: ${huntAddress}`);
   console.log(`TownHall address: ${townHallAddress}`);
 
@@ -44,6 +50,7 @@ main()
 
 /* Deploy script
 
+npx hardhat compile && npx hardhat run --network polygonmain scripts/deploy-zap.js
 npx hardhat compile && npx hardhat run --network ethmain scripts/deploy-zap.js
 
 */
