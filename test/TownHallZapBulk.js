@@ -1,7 +1,7 @@
 const { time, loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
 const { expect } = require("chai");
 
-describe("TownHallZap", function () {
+describe("TownHallZap - Bulk", function () {
   let townHallZap, townHall, building, huntToken;
   let owner, alice;
   let LOCK_UP_AMOUNT, LOCK_UP_DURATION;

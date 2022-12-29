@@ -17,13 +17,14 @@ contract TownHallZap {
     ITownHall public townHall;
     IERC20 public huntToken;
     IUniswapRouter public uniswapV3Router;
-    address private constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address private constant WETH_CONTRACT = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address private constant UNISWAP_V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
     uint256 public constant LOCK_UP_AMOUNT = 1e21; // 1,000 HUNT per NFT minting
 
-    constructor(address townHall_, address huntToken_, address _uniswapV3Router) {
+    constructor(address townHall_, address huntToken_) {
         townHall = ITownHall(townHall_);
         huntToken = IERC20(huntToken_);
-        uniswapV3Router = IUniswapRouter(_uniswapV3Router);
+        uniswapV3Router = IUniswapRouter(UNISWAP_V3_ROUTER);
     }
 
     // @dev save ~25% gas on bulk minting
@@ -46,7 +47,7 @@ contract TownHallZap {
             tokenIn: sourceToken,
             tokenOut: address(huntToken),
             fee: 3000,
-            recipient: msg.sender,
+            recipient: address(this),
             deadline: block.timestamp,
             amountOut: LOCK_UP_AMOUNT,
             amountInMaximum: amountInMaximum,
@@ -54,13 +55,15 @@ contract TownHallZap {
         });
 
         uniswapV3Router.exactOutputSingle(params);
+
+        huntToken.approve(address(townHall), LOCK_UP_AMOUNT);
         townHall.mint(mintTo);
     }
 
     // exactInputSingle for ETH
     function convertAndMintETH(address mintTo, uint256 amountInMaximum) external payable {
         ISwapRouter.ExactOutputSingleParams memory params = ISwapRouter.ExactOutputSingleParams({
-            tokenIn: WETH,
+            tokenIn: WETH_CONTRACT,
             tokenOut: address(huntToken),
             fee: 3000,
             recipient: msg.sender,
