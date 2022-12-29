@@ -38,59 +38,39 @@ contract TownHallZap {
     }
 
     // exactInputSingle for ERC20
-    function convertAndMint(address sourceToken, uint256 amountIn, uint24 _fee, address mintTo) external {
-        require(sourceToken != address(0), "sourceToken not address(0)");
-        require(mintTo.code.length == 0, "mintTo is not user");
-        require(IERC20(sourceToken).balanceOf(msg.sender) >= amountIn, "not enough sourceToken balance");
+    function convertAndMint(address sourceToken, address mintTo, uint256 amountInMaximum) external {
+        TransferHelper.safeTransferFrom(sourceToken, msg.sender, address(this), amountInMaximum);
+        TransferHelper.safeApprove(sourceToken, address(uniswapV3Router), amountInMaximum);
 
-        TransferHelper.safeTransferFrom(sourceToken, msg.sender, address(this), amountIn);
-        TransferHelper.safeApprove(sourceToken, address(uniswapV3Router), amountIn);
-
-        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+        ISwapRouter.ExactOutputSingleParams memory params = ISwapRouter.ExactOutputSingleParams({
             tokenIn: sourceToken,
             tokenOut: address(huntToken),
-            fee: _fee,
+            fee: 3000,
             recipient: msg.sender,
             deadline: block.timestamp,
-            amountIn: amountIn,
-            amountOutMinimum: 0,
+            amountOut: LOCK_UP_AMOUNT,
+            amountInMaximum: amountInMaximum,
             sqrtPriceLimitX96: 0
         });
 
-        uint256 amountOut = uniswapV3Router.exactInputSingle(params);
-        require(amountOut > LOCK_UP_AMOUNT, "not enough huntToken for 1townhall nft");
-
-        //refund remain sourceToken
-        TransferHelper.safeTransferFrom(sourceToken, address(this), msg.sender, amountIn - amountOut);
-
+        uniswapV3Router.exactOutputSingle(params);
         townHall.mint(mintTo);
     }
 
     // exactInputSingle for ETH
-    function convertAndMintETH(address mintTo, uint24 _fee) external payable {
-        require(msg.value > 0, "Must pass non 0 ETH amount");
-        require(mintTo.code.length == 0, "mintTo is not user");
-        require(address(this).balance >= msg.value, "not enough eth balance");
-
-        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+    function convertAndMintETH(address mintTo, uint256 amountInMaximum) external payable {
+        ISwapRouter.ExactOutputSingleParams memory params = ISwapRouter.ExactOutputSingleParams({
             tokenIn: WETH,
             tokenOut: address(huntToken),
-            fee: _fee,
+            fee: 3000,
             recipient: msg.sender,
             deadline: block.timestamp,
-            amountIn: msg.value,
-            amountOutMinimum: 0,
+            amountOut: LOCK_UP_AMOUNT,
+            amountInMaximum: amountInMaximum,
             sqrtPriceLimitX96: 0
         });
 
-        uint256 amountOut = uniswapV3Router.exactInputSingle{value: msg.value}(params);
-        require(amountOut > LOCK_UP_AMOUNT, "not enough huntToken for 1townhall nft");
-
-        //refund remain eth
-        uniswapV3Router.refundETH();
-        (bool success, ) = msg.sender.call{value: address(this).balance}("");
-        require(success, "refund failed");
-
+        uniswapV3Router.exactOutputSingle{value: msg.value}(params);
         townHall.mint(mintTo);
     }
 }
