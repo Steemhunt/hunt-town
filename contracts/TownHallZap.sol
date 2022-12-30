@@ -10,8 +10,14 @@ interface ITownHall {
     function mint(address to) external;
 }
 
+interface IWETH {
+    function deposit() external payable;
+    function withdraw(uint) external;
+}
+
 contract TownHallZap {
     error TownHallZap__ZapIsNotRequiredForHUNT();
+    error TownHallZap__InvalidETHAmount();
 
     ITownHall public immutable townHall;
     IERC20 public immutable huntToken;
@@ -31,6 +37,8 @@ contract TownHallZap {
         uniswapV3Router = ISwapRouter(UNISWAP_V3_ROUTER);
         uniswapV3Quoter = IQuoter(UNISWAP_V3_QUOTER);
     }
+
+    receive() external payable {}
 
     /**
      *  @notice Bulk minting interface for gas saving
@@ -69,6 +77,19 @@ contract TownHallZap {
         if (sourceToken == address(huntToken)) revert TownHallZap__ZapIsNotRequiredForHUNT();
 
         TransferHelper.safeTransferFrom(sourceToken, msg.sender, address(this), amountInMaximum);
+
+        uint256 amountIn = _convertAndMint(sourceToken, mintTo, amountInMaximum);
+
+        // For exact output swaps, the amountInMaximum may not have all been spent.
+        // If the actual amount spent (amountIn) is less than the specified maximum amount,
+        // we must refund the msg.sender and approve the uniswapV3Router to spend 0.
+        if (amountIn < amountInMaximum) {
+            TransferHelper.safeApprove(sourceToken, address(uniswapV3Router), 0);
+            TransferHelper.safeTransfer(sourceToken, msg.sender, amountInMaximum - amountIn);
+        }
+    }
+
+    function _convertAndMint(address sourceToken, address mintTo, uint256 amountInMaximum) private returns (uint256 amountIn) {
         TransferHelper.safeApprove(sourceToken, address(uniswapV3Router), amountInMaximum);
 
         ISwapRouter.ExactOutputSingleParams memory params = ISwapRouter.ExactOutputSingleParams({
@@ -82,34 +103,26 @@ contract TownHallZap {
             sqrtPriceLimitX96: 0
         });
 
-        uint256 amountIn =  uniswapV3Router.exactOutputSingle(params);
-
-        // For exact output swaps, the amountInMaximum may not have all been spent.
-        // If the actual amount spent (amountIn) is less than the specified maximum amount,
-        // we must refund the msg.sender and approve the uniswapV3Router to spend 0.
-        if (amountIn < amountInMaximum) {
-            TransferHelper.safeApprove(sourceToken, address(uniswapV3Router), 0);
-            TransferHelper.safeTransfer(sourceToken, msg.sender, amountInMaximum - amountIn);
-        }
+        amountIn =  uniswapV3Router.exactOutputSingle(params);
 
         huntToken.approve(address(townHall), LOCK_UP_AMOUNT);
         townHall.mint(mintTo);
     }
 
     // @notice Convert ETH to HUNT and mint Building NFT in one trasaction
-    function convertAndMintETH(address mintTo, uint256 amountInMaximum) external payable {
-        ISwapRouter.ExactOutputSingleParams memory params = ISwapRouter.ExactOutputSingleParams({
-            tokenIn: WETH_CONTRACT,
-            tokenOut: address(huntToken),
-            fee: UNISWAP_FEE,
-            recipient: msg.sender,
-            deadline: block.timestamp,
-            amountOut: LOCK_UP_AMOUNT,
-            amountInMaximum: amountInMaximum,
-            sqrtPriceLimitX96: 0
-        });
+    function convertETHAndMint(address mintTo, uint256 amountInMaximum) external payable {
+        if (msg.value != amountInMaximum) revert TownHallZap__InvalidETHAmount();
 
-        uniswapV3Router.exactOutputSingle{value: msg.value}(params);
-        townHall.mint(mintTo);
+        IWETH(WETH_CONTRACT).deposit{ value: msg.value }();
+
+        uint256 amountIn = _convertAndMint(WETH_CONTRACT, mintTo, amountInMaximum);
+
+        if (amountIn < amountInMaximum) {
+            TransferHelper.safeApprove(WETH_CONTRACT, address(uniswapV3Router), 0);
+
+            uint256 refundAMount = amountInMaximum - amountIn;
+            IWETH(WETH_CONTRACT).withdraw(refundAMount);
+            TransferHelper.safeTransferETH(msg.sender, refundAMount);
+        }
     }
 }

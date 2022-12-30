@@ -2,7 +2,7 @@ const { time, loadFixture } = require("@nomicfoundation/hardhat-network-helpers"
 const { expect } = require("chai");
 const IERC20_SOURCE = "@openzeppelin/contracts/token/ERC20/IERC20.sol:IERC20";
 
-describe("TownHallZap - Convert", function () {
+describe.only("TownHallZap - Convert", function () {
   let townHallZap, townHall, building, huntToken, usdtToken, wethToken;
   let owner, alice, impersonatedSigner;
 
@@ -13,6 +13,7 @@ describe("TownHallZap - Convert", function () {
   const USDT_ADDRESS = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
   const HUNT_ADDRESS = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5";
   const MAX_USDT_PER_BUILDING = 250n * 10n**6n; // 250 USDT > 1000 HUNT on the forked block (16288578)
+  const MAX_ETH_PER_BUILDING = 2n * 10n**17n;
 
   async function deployFixtures() {
     const Building = await ethers.getContractFactory("Building");
@@ -54,6 +55,9 @@ describe("TownHallZap - Convert", function () {
   describe("Convert and Mint", function() {
     beforeEach(async function() {
       await usdtToken.connect(impersonatedSigner).approve(townHallZap.address, 9999999n * 10n**6n);
+      this.originalUSDTBalance = BigInt(await usdtToken.balanceOf(impersonatedSigner.address));
+      this.estimatedAmount = BigInt(await townHallZap.callStatic.estimateAmountIn(usdtToken.address));
+
       await townHallZap.connect(impersonatedSigner).convertAndMint(USDT_ADDRESS, alice.address, MAX_USDT_PER_BUILDING);
     });
 
@@ -65,9 +69,34 @@ describe("TownHallZap - Convert", function () {
       expect(await huntToken.balanceOf(townHallZap.address)).to.equal(0);
     });
 
-    // FIXME: This will fail without refund process on convertAndMint() function
-    it("should have no remaining USDT on Zap contract", async function() {
-      expect(await usdtToken.balanceOf(townHallZap.address)).to.equal(0);
+    it("should refund remaining USDT to the caller, so the caller paid exact amount as estimated", async function() {
+      expect(await usdtToken.balanceOf(impersonatedSigner.address)).to.equal(this.originalUSDTBalance - this.estimatedAmount);
+    });
+
+    // TODO: More test cases & edge cases
+  });
+
+  describe.only("Convert ETH and Mint", function() {
+    beforeEach(async function() {
+      this.originalETHBalance = BigInt(await impersonatedSigner.getBalance());
+      this.estimatedAmount = BigInt(await townHallZap.callStatic.estimateAmountIn(wethToken.address));
+
+      await townHallZap.connect(impersonatedSigner).convertETHAndMint(alice.address, MAX_ETH_PER_BUILDING, { value: MAX_ETH_PER_BUILDING });
+    });
+
+    it("should convert ETH to HUNT and mint the Building NFT", async function() {
+      expect(await building.balanceOf(alice.address)).to.equal(1);
+    });
+
+    it("should have no remaining ETH on Zap contract", async function() {
+      expect(await townHallZap.provider.getBalance(townHallZap.address)).to.equal(0);
+    });
+
+    it("should refund remaining ETH to the caller, so the caller paid exact amount as estimated", async function() {
+      const newEstimation = BigInt(await townHallZap.callStatic.estimateAmountIn(wethToken.address));
+      await expect(
+        townHallZap.connect(impersonatedSigner).convertETHAndMint(alice.address, MAX_ETH_PER_BUILDING, { value: MAX_ETH_PER_BUILDING })
+      ).to.changeEtherBalance(impersonatedSigner, -newEstimation, { includeFee: false });
     });
 
     // TODO: More test cases & edge cases
