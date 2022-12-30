@@ -69,7 +69,7 @@ describe("TownHallZap - Bulk", function () {
     it("should revert if too many minting count", async function() {
       await expect(townHallZap.connect(alice).mintBulk(alice.address, 201)).to.be.revertedWithCustomError(
         townHallZap,
-        "TownHallZap__TooManyCount"
+        "TownHallZap__InvalidMintingCount"
       );
     });
   });
