@@ -204,6 +204,25 @@ describe("TownHallZap - Convert", function () {
       it("should convert ETH to HUNT and mint 5 Building NFTs", async function () {
         expect(await building.balanceOf(alice.address)).to.equal(5);
       });
+      it("should have no remaining ETH on Zap contract", async function () {
+        expect(
+          await townHallZap.provider.getBalance(townHallZap.address)
+        ).to.equal(0);
+      });
+      it("should refund remaining ETH to the caller, so the caller paid exact amount as estimated", async function () {
+        const newEstimation = BigInt(
+          await townHallZap.callStatic.estimateAmountIn(wethToken.address, 2)
+        );
+        await expect(
+          townHallZap
+            .connect(impersonatedSigner)
+            .convertETHAndMint(alice.address, 2, MAX_ETH_PER_BUILDING * 2n, {
+              value: MAX_ETH_PER_BUILDING * 2n,
+            })
+        ).to.changeEtherBalance(impersonatedSigner, -newEstimation, {
+          includeFee: false,
+        });
+      });
     });
 
     // TODO: Revert & Error handling
