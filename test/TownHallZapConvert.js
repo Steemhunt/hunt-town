@@ -39,7 +39,7 @@ describe("TownHallZap - Convert", function () {
     impersonatedSigner = await ethers.getImpersonatedSigner(TEST_WALLET);
   });
 
-  describe.only("Estimate source token amount required for zap-in", function() {
+  describe("Estimate source token amount required for zap-in", function() {
     it("Should returns correct estimation for USDT", async function() {
       const usdtRequired = await townHallZap.callStatic.estimateAmountIn(usdtToken.address);
       expect(usdtRequired).to.equal(216034989n); // $216.03

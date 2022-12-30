@@ -11,6 +11,8 @@ interface ITownHall {
 }
 
 contract TownHallZap {
+    error TownHallZap__ZapIsNotRequiredForHUNT();
+
     ITownHall public immutable townHall;
     IERC20 public immutable huntToken;
     ISwapRouter public immutable uniswapV3Router;
@@ -64,6 +66,8 @@ contract TownHallZap {
 
     // @notice Convert sourceToken to HUNT and mint Building NFT in one trasaction
     function convertAndMint(address sourceToken, address mintTo, uint256 amountInMaximum) external {
+        if (sourceToken == address(huntToken)) revert TownHallZap__ZapIsNotRequiredForHUNT();
+
         TransferHelper.safeTransferFrom(sourceToken, msg.sender, address(this), amountInMaximum);
         TransferHelper.safeApprove(sourceToken, address(uniswapV3Router), amountInMaximum);
 
@@ -78,7 +82,15 @@ contract TownHallZap {
             sqrtPriceLimitX96: 0
         });
 
-        uniswapV3Router.exactOutputSingle(params);
+        uint256 amountIn =  uniswapV3Router.exactOutputSingle(params);
+
+        // For exact output swaps, the amountInMaximum may not have all been spent.
+        // If the actual amount spent (amountIn) is less than the specified maximum amount,
+        // we must refund the msg.sender and approve the uniswapV3Router to spend 0.
+        if (amountIn < amountInMaximum) {
+            TransferHelper.safeApprove(sourceToken, address(uniswapV3Router), 0);
+            TransferHelper.safeTransfer(sourceToken, msg.sender, amountInMaximum - amountIn);
+        }
 
         huntToken.approve(address(townHall), LOCK_UP_AMOUNT);
         townHall.mint(mintTo);
