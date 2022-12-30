@@ -3,12 +3,13 @@ const { expect } = require("chai");
 const IERC20_SOURCE = "@openzeppelin/contracts/token/ERC20/IERC20.sol:IERC20";
 
 describe("TownHallZap - Convert", function () {
-  let townHallZap, townHall, building, huntToken, usdtToken;
+  let townHallZap, townHall, building, huntToken, usdtToken, wethToken;
   let owner, alice, impersonatedSigner;
 
   // Impersonate a wallet with enough HUNT and USDT balance
   const TEST_WALLET = "0xe1aAF39DB1Cd7E16C4305410Fe72B13c7ADD17e6";
 
+  const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
   const USDT_ADDRESS = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
   const HUNT_ADDRESS = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5";
   const MAX_USDT_PER_BUILDING = 250n * 10n**6n; // 250 USDT > 1000 HUNT on the forked block (16288578)
@@ -19,6 +20,7 @@ describe("TownHallZap - Convert", function () {
 
     const huntToken = await hre.ethers.getContractAt(IERC20_SOURCE, HUNT_ADDRESS);
     const usdtToken = await hre.ethers.getContractAt(IERC20_SOURCE, USDT_ADDRESS);
+    const wethToken = await hre.ethers.getContractAt(IERC20_SOURCE, WETH_ADDRESS);
 
     const TownHall = await ethers.getContractFactory("TownHall");
     const townHall = await TownHall.deploy(building.address, huntToken.address);
@@ -27,17 +29,29 @@ describe("TownHallZap - Convert", function () {
     const TownHallZap = await ethers.getContractFactory("TownHallZap");
     const townHallZap = await TownHallZap.deploy(townHall.address, huntToken.address);
 
-    return [ townHallZap, townHall, building, huntToken, usdtToken ];
+    return [ townHallZap, townHall, building, huntToken, usdtToken, wethToken ];
   }
 
   beforeEach(async function() {
-    [ townHallZap, townHall, building, huntToken, usdtToken ] = await loadFixture(deployFixtures);
+    [ townHallZap, townHall, building, huntToken, usdtToken, wethToken ] = await loadFixture(deployFixtures);
     LOCK_UP_AMOUNT = (await townHall.LOCK_UP_AMOUNT()).toBigInt();
     [ owner, alice ] = await ethers.getSigners();
     impersonatedSigner = await ethers.getImpersonatedSigner(TEST_WALLET);
   });
 
-  describe.only("Convert and Mint", function() {
+  describe.only("Estimate source token amount required for zap-in", function() {
+    it("Should returns correct estimation for USDT", async function() {
+      const usdtRequired = await townHallZap.callStatic.estimateAmountIn(usdtToken.address);
+      expect(usdtRequired).to.equal(216034989n); // $216.03
+    });
+
+    it("Should returns correct estimation for WETH", async function() {
+      const wethRequired = await townHallZap.callStatic.estimateAmountIn(wethToken.address);
+      expect(wethRequired).to.equal(182848909798753181n); // 0.1828 ETH
+    });
+  }); // Estimate
+
+  describe("Convert and Mint", function() {
     beforeEach(async function() {
       await usdtToken.connect(impersonatedSigner).approve(townHallZap.address, 9999999n * 10n**6n);
       await townHallZap.connect(impersonatedSigner).convertAndMint(USDT_ADDRESS, alice.address, MAX_USDT_PER_BUILDING);
