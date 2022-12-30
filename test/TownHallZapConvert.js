@@ -2,7 +2,7 @@ const { time, loadFixture } = require("@nomicfoundation/hardhat-network-helpers"
 const { expect } = require("chai");
 const IERC20_SOURCE = "@openzeppelin/contracts/token/ERC20/IERC20.sol:IERC20";
 
-describe.only("TownHallZap - Convert", function () {
+describe("TownHallZap - Convert", function () {
   let townHallZap, townHall, building, huntToken, usdtToken, wethToken;
   let owner, alice, impersonatedSigner;
 
@@ -76,7 +76,7 @@ describe.only("TownHallZap - Convert", function () {
     // TODO: More test cases & edge cases
   });
 
-  describe.only("Convert ETH and Mint", function() {
+  describe("Convert ETH and Mint", function() {
     beforeEach(async function() {
       this.originalETHBalance = BigInt(await impersonatedSigner.getBalance());
       this.estimatedAmount = BigInt(await townHallZap.callStatic.estimateAmountIn(wethToken.address));

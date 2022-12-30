@@ -64,4 +64,13 @@ describe("TownHallZap - Bulk", function () {
       expect(await huntToken.balanceOf(townHall.address)).to.equal(LOCK_UP_AMOUNT * BigInt(TEST_COUNT));
     });
   }); // MintBulk
+
+  describe("Edge Cases", function() {
+    it("should revert if too many minting count", async function() {
+      await expect(townHallZap.connect(alice).mintBulk(alice.address, 201)).to.be.revertedWithCustomError(
+        townHallZap,
+        "TownHallZap__TooManyCount"
+      );
+    });
+  });
 });

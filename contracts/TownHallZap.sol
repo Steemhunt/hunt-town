@@ -16,6 +16,7 @@ interface IWETH {
 }
 
 contract TownHallZap {
+    error TownHallZap__TooManyCount();
     error TownHallZap__ZapIsNotRequiredForHUNT();
     error TownHallZap__InvalidETHAmount();
 
@@ -45,6 +46,8 @@ contract TownHallZap {
      * (~25% reduced gas cost compared to multiple minting calls)
      */
     function mintBulk(address to, uint256 count) external {
+        if (count > 200) revert TownHallZap__TooManyCount();
+
         uint256 totalHuntAmount = LOCK_UP_AMOUNT * count;
         huntToken.transferFrom(msg.sender, address(this), totalHuntAmount);
         huntToken.approve(address(townHall), totalHuntAmount);
