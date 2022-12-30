@@ -49,8 +49,10 @@ contract TownHallZap {
         huntToken.transferFrom(msg.sender, address(this), totalHuntAmount);
         huntToken.approve(address(townHall), totalHuntAmount);
 
-        for (uint256 i = 0; i < count; i++) {
-            townHall.mint(to);
+        unchecked {
+            for (uint256 i = 0; i < count; i++) {
+                townHall.mint(to);
+            }
         }
     }
 
