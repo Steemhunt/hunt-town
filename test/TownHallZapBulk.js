@@ -1,7 +1,7 @@
 const { time, loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
 const { expect } = require("chai");
 
-describe("TownHallZap", function () {
+describe("TownHallZap - Bulk", function () {
   let townHallZap, townHall, building, huntToken;
   let owner, alice;
   let LOCK_UP_AMOUNT, LOCK_UP_DURATION;
@@ -64,4 +64,13 @@ describe("TownHallZap", function () {
       expect(await huntToken.balanceOf(townHall.address)).to.equal(LOCK_UP_AMOUNT * BigInt(TEST_COUNT));
     });
   }); // MintBulk
+
+  describe("Edge Cases", function() {
+    it("should revert if too many minting count", async function() {
+      await expect(townHallZap.connect(alice).mintBulk(alice.address, 201)).to.be.revertedWithCustomError(
+        townHallZap,
+        "TownHallZap__InvalidMintingCount"
+      );
+    });
+  });
 });
