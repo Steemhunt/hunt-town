@@ -1,16 +1,16 @@
-const hre = require("hardhat");
+const hre = require('hardhat');
 
 async function main() {
   const accounts = await hre.ethers.getSigners();
   const deployer = accounts[0].address;
   console.log(`Deploy from account: ${deployer}`);
 
-  const latestBlock = await hre.ethers.provider.getBlock("latest");
-  const nonce = await hre.ethers.provider.getTransactionCount(deployer, "latest");
+  const latestBlock = await hre.ethers.provider.getBlock('latest');
+  const nonce = await hre.ethers.provider.getTransactionCount(deployer, 'latest');
   console.log(`Latest Block: ${latestBlock.number} / Nonce: ${nonce}`);
 
-  let huntAddress = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5";
-  if (hre.network.name === "goerli" || hre.network.name === "polygonmain") {
+  let huntAddress = '0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5';
+  if (hre.network.name === 'goerli' || hre.network.name === 'polygonmain') {
     // const HuntTokenMock = await hre.ethers.getContractFactory('HuntTokenMock');
     // const token = await HuntTokenMock.deploy();
     // await token.deployed();
@@ -18,11 +18,10 @@ async function main() {
     // huntAddress = token.address;
     // console.log(` -> Test HUNT token contract deployed at ${huntAddress}`);
 
-    huntAddress = "0x4bF67e5C9baD43DD89dbe8fCAD3c213C868fe881"; // Use an existing one
+    huntAddress = '0x4bF67e5C9baD43DD89dbe8fCAD3c213C868fe881'; // Use an existing one
   }
 
   console.log(`HUNT token address: ${huntAddress}`);
-
 
   const Building = await hre.ethers.getContractFactory('Building');
   const building = await Building.deploy({ nonce: nonce });
@@ -57,15 +56,15 @@ async function main() {
     npx hardhat verify --network ${hre.network.name} ${building.address}
     npx hardhat verify --network ${hre.network.name} ${townHall.address} '${building.address}' '${huntAddress}'
   `);
-};
+}
 
 main()
+  // eslint-disable-next-line no-process-exit
   .then(() => process.exit(0))
-  .catch(error => {
+  .catch((error) => {
     console.error(error);
-    process.exit(1);
+    throw new Error(error);
   });
-
 
 /* Deploy script
 

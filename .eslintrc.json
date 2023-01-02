@@ -1,0 +1,50 @@
+{
+    "env": {
+        "node": true,
+        "es6": true
+    },
+    "extends": [
+        "plugin:node/recommended"
+    ],
+    "parserOptions": {
+        "ecmaVersion": 13 // ecmaVersion 2022
+    },
+    "plugins": ["prettier"],
+    "rules": {
+        "prettier/prettier": "warn",
+        "no-unused-vars": ["warn", { "args": "none" }],
+        "no-unused-expressions": [
+            "warn",
+            {
+                "allowTernary": true
+            }
+        ],
+        "import/no-cycle": "off",
+        "no-console": "off",
+        "func-names": "off",
+        "object-shorthand": "off",
+        "class-methods-use-this": "off",
+        "import/no-dynamic-require": "off",
+        "global-require": "off",
+        "no-shadow": "off",
+        "no-useless-constructor": "off",
+        "node/no-unsupported-features/es-syntax": "off",
+        "node/no-missing-import": "off",
+        "lines-between-class-members": "off",
+        "import/prefer-default-export": "off",
+        "import/named": "off",
+        "max-len": [
+          "error",
+          {
+            "code": 120,
+            "tabWidth": 2,
+            "ignoreComments": true,
+            "ignoreTrailingComments": true,
+            "ignoreUrls": true,
+            "ignoreStrings": true,
+            "ignoreTemplateLiterals": true,
+            "ignoreRegExpLiterals": true
+          }
+        ]
+    }
+}

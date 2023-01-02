@@ -1,21 +1,21 @@
-const hre = require("hardhat");
+const hre = require('hardhat');
 
 async function main() {
   const accounts = await hre.ethers.getSigners();
   const deployer = accounts[0].address;
   console.log(`Deploy from account: ${deployer}`);
 
-  const latestBlock = await hre.ethers.provider.getBlock("latest");
-  const nonce = await hre.ethers.provider.getTransactionCount(deployer, "latest");
+  const latestBlock = await hre.ethers.provider.getBlock('latest');
+  const nonce = await hre.ethers.provider.getTransactionCount(deployer, 'latest');
   console.log(`Latest Block: ${latestBlock.number} / Nonce: ${nonce}`);
 
-  let huntAddress = "0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5";
-  let townHallAddress = "0xb09A1410cF4C49F92482F5cd2CbF19b638907193";
+  let huntAddress = '0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5';
+  let townHallAddress = '0xb09A1410cF4C49F92482F5cd2CbF19b638907193';
 
   // For testnet
-  if (hre.network.name === "goerli" || hre.network.name === "polygonmain") {
-    huntAddress = "0x4bF67e5C9baD43DD89dbe8fCAD3c213C868fe881";
-    townHallAddress = "0x794B9BC9c7316487D9fb31B6eEB8b9b57d958c3D";
+  if (hre.network.name === 'goerli' || hre.network.name === 'polygonmain') {
+    huntAddress = '0x4bF67e5C9baD43DD89dbe8fCAD3c213C868fe881';
+    townHallAddress = '0x794B9BC9c7316487D9fb31B6eEB8b9b57d958c3D';
   }
 
   console.log(`HUNT token address: ${huntAddress}`);
@@ -38,15 +38,15 @@ async function main() {
   console.log(`
     npx hardhat verify --network ${hre.network.name} ${zap.address} '${townHallAddress}' '${huntAddress}'
   `);
-};
+}
 
 main()
+  // eslint-disable-next-line no-process-exit
   .then(() => process.exit(0))
-  .catch(error => {
+  .catch((error) => {
     console.error(error);
-    process.exit(1);
+    throw new Error(error);
   });
-
 
 /* Deploy script
 
