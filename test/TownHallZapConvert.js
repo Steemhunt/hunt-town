@@ -94,7 +94,15 @@ describe('TownHallZap - Convert', function () {
         expect(await building.balanceOf(alice.address)).to.equal(10);
       });
 
-      // TODO: More test cases
+      it('should have no remaining HUNT on Zap contract', async function () {
+        expect(await huntToken.balanceOf(townHallZap.address)).to.equal(0);
+      });
+
+      it('should refund remaining USDT to the caller, so the caller paid exact amount as estimated', async function () {
+        expect(await usdtToken.balanceOf(impersonatedSigner.address)).to.equal(
+          this.originalUSDTBalance - this.estimatedAmount
+        );
+      });
     });
 
     // TODO: Revert & Error handling
