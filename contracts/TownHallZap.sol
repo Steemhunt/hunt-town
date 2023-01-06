@@ -54,7 +54,7 @@ contract TownHallZap {
         huntToken.approve(address(townHall), totalHuntAmount);
 
         unchecked {
-            for (uint256 i = 0; i < count; i++) {
+            for (uint256 i = 0; i < count; ++i) {
                 townHall.mint(to);
             }
         }
@@ -120,7 +120,7 @@ contract TownHallZap {
             townHall.mint(mintTo);
         } else {
             unchecked {
-                for (uint256 i = 0; i < count; i++) {
+                for (uint256 i = 0; i < count; ++i) {
                     townHall.mint(mintTo);
                 }
             }
