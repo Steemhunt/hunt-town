@@ -37,6 +37,12 @@ module.exports = {
       // gasPrice: 50000000000, // 50 GWei
       accounts: [process.env.GOERLI_TEST_PRIVATE_KEY]
     },
+    candle: {
+     url: `https://candle-rpc.com`,
+     chainId: 534,
+     // gasPrice: 50000000000, // 50 GWei
+     accounts: [process.env.GOERLI_TEST_PRIVATE_KEY]
+    },
     ethmain: {
       url: ETH_MAINNET_RPC,
       chainId: 1,
