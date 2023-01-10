@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/IQuoter.sol";
 import "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
+import "solidity-bytes-utils/contracts/BytesLib.sol";
 
 interface ITownHall {
     function mint(address to) external;
@@ -16,6 +17,8 @@ interface IWETH {
 }
 
 contract TownHallZap {
+    using BytesLib for bytes;
+
     error TownHallZap__InvalidMintingCount();
     error TownHallZap__ZapIsNotRequiredForHUNT();
     error TownHallZap__InvalidETHSent();
@@ -57,6 +60,13 @@ contract TownHallZap {
             for (uint256 i = 0; i < count; ++i) {
                 townHall.mint(to);
             }
+        }
+    }
+
+    function getOutputTokenFromPath(bytes calldata path) public pure returns (address lastAddres) {
+        bytes memory lastSlice = path.slice(path.length - 20, 20);
+        assembly {
+          lastAddres := mload(add(lastSlice, 20))
         }
     }
 
@@ -112,7 +122,7 @@ contract TownHallZap {
             sqrtPriceLimitX96: 0
         });
 
-        amountIn =  uniswapV3Router.exactOutputSingle(params);
+        amountIn = uniswapV3Router.exactOutputSingle(params);
 
         huntToken.approve(address(townHall), lockUpAmount);
 

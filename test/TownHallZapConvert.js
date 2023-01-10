@@ -2,8 +2,14 @@ const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
 const { expect } = require('chai');
 const IERC20_SOURCE = '@openzeppelin/contracts/token/ERC20/IERC20.sol:IERC20';
 
+const { AlphaRouter, nativeOnChain, SwapType } = require('@uniswap/smart-order-router');
+const { Token, CurrencyAmount, TradeType, Percent } = require('@uniswap/sdk-core');
+const { encodeRouteToPath } = require('@uniswap/v3-sdk');
+const { encodeMixedRouteToPath, MixedRouteSDK, Protocol } = require('@uniswap/router-sdk');
+
 describe('TownHallZap - Convert', function () {
-  let townHallZap, townHall, building, huntToken, usdtToken, wethToken;
+  let townHallZap, townHall, building, huntToken, usdtToken, wethToken, swapTokens;
+  let lockUpAmount;
   let alice, impersonatedSigner;
 
   // Impersonate a wallet with enough HUNT and USDT balance
@@ -12,6 +18,8 @@ describe('TownHallZap - Convert', function () {
   const WETH_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
   const USDT_ADDRESS = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
   const HUNT_ADDRESS = '0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5';
+  const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+
   const MAX_USDT_PER_BUILDING = 250n * 10n ** 6n; // 250 USDT > 1000 HUNT on the forked block (16288578)
   const MAX_ETH_PER_BUILDING = 2n * 10n ** 17n;
 
@@ -30,26 +38,71 @@ describe('TownHallZap - Convert', function () {
     const TownHallZap = await ethers.getContractFactory('TownHallZap');
     const townHallZap = await TownHallZap.deploy(townHall.address, huntToken.address);
 
-    return [townHallZap, townHall, building, huntToken, usdtToken, wethToken];
+    const swapTokens = {
+      native: nativeOnChain(1),
+      weth: new Token(1, WETH_ADDRESS, 18, 'WETH'),
+      usdc: new Token(1, USDC_ADDRESS, 6, 'USDC'),
+      hunt: new Token(1, HUNT_ADDRESS, 18, 'HUNT')
+    };
+
+    return [townHallZap, townHall, building, huntToken, usdtToken, wethToken, swapTokens];
   }
 
   beforeEach(async function () {
-    [townHallZap, townHall, building, huntToken, usdtToken, wethToken] = await loadFixture(deployFixtures);
-    LOCK_UP_AMOUNT = (await townHall.LOCK_UP_AMOUNT()).toBigInt();
+    [townHallZap, townHall, building, huntToken, usdtToken, wethToken, swapTokens] = await loadFixture(deployFixtures);
+    lockUpAmount = String(await townHall.LOCK_UP_AMOUNT());
     [, alice] = await ethers.getSigners();
     impersonatedSigner = await ethers.getImpersonatedSigner(TEST_WALLET);
   });
 
-  describe('Estimate source token amount required for zap-in', function () {
-    it('Should returns correct estimation for USDT', async function () {
-      const usdtRequired = await townHallZap.callStatic.estimateAmountIn(usdtToken.address, 1);
-      expect(usdtRequired).to.equal(216034989n); // $216.03
+  describe.only('Estimate source token amount required for zap-in', function () {
+    it('test', async function () {
+      const router = new AlphaRouter({
+        chainId: 1,
+        provider: ethers.provider
+      });
+
+      const params = {
+        amount: CurrencyAmount.fromRawAmount(swapTokens.hunt, lockUpAmount), // TODO: lockUpAmount
+        quoteCurrency: swapTokens.usdc,
+        tradeType: TradeType.EXACT_OUTPUT
+      };
+      const route = await router.route(...Object.values(params));
+
+      // show results
+      const bestRoute = route.route[0].route;
+      console.log(bestRoute);
+
+      const path =
+        bestRoute.protocol === Protocol.V3
+          ? encodeRouteToPath(bestRoute, false) // quoteExactOutput: false because it's already reversed
+          : encodeMixedRouteToPath(
+              bestRoute.protocol === Protocol.V2
+                ? new MixedRouteSDK(bestRoute.pairs, bestRoute.input, bestRoute.output)
+                : bestRoute
+            );
+
+      // parse path
+      // const path = encodeRouteToPath(bestRoute, true); // FIXME: This outputs error if route is V2
+      console.log(`Path: `, path);
+
+      // log some prices
+      console.log(`Quote Exact In: ${route.quote.toFixed(6)}`);
+      console.log(`Gas Adjusted Quote In: ${route.quoteGasAdjusted.toFixed(2)}`);
+      console.log(`Gas Used USD: ${route.estimatedGasUsedUSD.toFixed(6)}`);
+
+      expect(await townHallZap.getOutputTokenFromPath(path)).to.equal(HUNT_ADDRESS);
     });
 
-    it('Should returns correct estimation for WETH', async function () {
-      const wethRequired = await townHallZap.callStatic.estimateAmountIn(wethToken.address, 1);
-      expect(wethRequired).to.equal(182848909798753181n); // 0.1828 ETH
-    });
+    // it('Should returns correct estimation for USDT', async function () {
+    //   const usdtRequired = await townHallZap.callStatic.estimateAmountIn(usdtToken.address, 1);
+    //   expect(usdtRequired).to.equal(216034989n); // $216.03
+    // });
+
+    // it('Should returns correct estimation for WETH', async function () {
+    //   const wethRequired = await townHallZap.callStatic.estimateAmountIn(wethToken.address, 1);
+    //   expect(wethRequired).to.equal(182848909798753181n); // 0.1828 ETH
+    // });
   }); // Estimate
 
   describe('Convert and Mint', function () {

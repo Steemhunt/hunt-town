@@ -23,7 +23,7 @@ module.exports = {
     hardhat: {
       forking: {
         url: ETH_MAINNET_RPC,
-        blockNumber: 16288578
+        blockNumber: 16375283
       }
     },
     goerli: {
