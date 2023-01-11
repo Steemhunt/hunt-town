@@ -42,13 +42,15 @@ describe('TownHallZap - Convert', function () {
 
   async function getSwapPath() {
     // Path: USDC -> WETH -> HUNT
-    return '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb480001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb89aab071b4129b083b01cb5a0cb513ce7eca26fa5';
+    // Path should be reversed for an exactOutput swap, the first swap that occurs is the swap which returns the eventual desired token.
+    // In this case, our desired output token is HUNT so that swap happens first, and is encoded in the path accordingly.
+    return '0x9aab071b4129b083b01cb5a0cb513ce7eca26fa5000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 
     // Just return a fixture path calculated by following logic to save test time
 
     const swapTokens = {
-      native: nativeOnChain(1),
-      weth: new Token(1, WETH_ADDRESS, 18, 'WETH'),
+      // native: nativeOnChain(1),
+      // weth: new Token(1, WETH_ADDRESS, 18, 'WETH'),
       usdc: new Token(1, USDC_ADDRESS, 6, 'USDC'),
       hunt: new Token(1, HUNT_ADDRESS, 18, 'HUNT')
     };
@@ -71,7 +73,7 @@ describe('TownHallZap - Convert', function () {
 
     const path =
       bestRoute.protocol === Protocol.V3
-        ? encodeRouteToPath(bestRoute, false) // quoteExactOutput: false because it's already reversed
+        ? encodeRouteToPath(bestRoute, true) // quoteExactOutput: true - to generate reversed path
         : encodeMixedRouteToPath(
             bestRoute.protocol === Protocol.V2
               ? new MixedRouteSDK(bestRoute.pairs, bestRoute.input, bestRoute.output)
@@ -112,7 +114,7 @@ describe('TownHallZap - Convert', function () {
       beforeEach(async function () {
         await usdcToken.connect(impersonatedSigner).approve(townHallZap.address, 9999999n * 10n ** 6n);
         this.originalUSDCBalance = BigInt(await usdcToken.balanceOf(impersonatedSigner.address));
-        this.AMOUNT_TO_DEDUCT = 1234;
+        this.AMOUNT_TO_DEDUCT = 241805219n; // $241.80 USDC
 
         await townHallZap
           .connect(impersonatedSigner)

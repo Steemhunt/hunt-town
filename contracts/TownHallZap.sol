@@ -67,10 +67,10 @@ contract TownHallZap {
     }
 
     /**
-     * @notice Get the first token address from the Swap Path
+     * @notice Get the first token (output token) address from the Swap Path (exactOutput path should be reversed)
      * @dev Ref: https://uniswapv3book.com/docs/milestone_4/path/
      */
-    function getInputToken(bytes calldata path) public pure returns (address firstAddress) {
+    function getOutputToken(bytes calldata path) public pure returns (address firstAddress) {
         bytes memory firstSlice = path.slice(0, 20);
         assembly {
           firstAddress := mload(add(firstSlice, 20))
@@ -78,10 +78,10 @@ contract TownHallZap {
     }
 
     /**
-     * @notice Get the last token address from the Swap Path
+     * @notice Get the last token (input token) address from the Swap Path (exactOutput path should be reversed)
      * @dev Ref: https://uniswapv3book.com/docs/milestone_4/path/
      */
-    function getOutputToken(bytes calldata path) public pure returns (address lastAddres) {
+    function getInputToken(bytes calldata path) public pure returns (address lastAddres) {
         bytes memory lastSlice = path.slice(path.length - 20, 20);
         assembly {
           lastAddres := mload(add(lastSlice, 20))
@@ -114,17 +114,16 @@ contract TownHallZap {
         uint256 lockUpAmount = LOCK_UP_AMOUNT * count;
         address inputToken = getInputToken(path);
 
+        // assert(IERC20(inputToken).balanceOf(address(this)) == amountInMaximum);
         TransferHelper.safeApprove(inputToken, address(uniswapV3Router), amountInMaximum);
 
-        ISwapRouter.ExactOutputParams memory params = ISwapRouter.ExactOutputParams({
+        amountIn = uniswapV3Router.exactOutput(ISwapRouter.ExactOutputParams({
             path: path,
             recipient: address(this),
             deadline: block.timestamp,
             amountOut: lockUpAmount,
             amountInMaximum: amountInMaximum
-        });
-
-        amountIn = uniswapV3Router.exactOutput(params);
+        }));
 
         // huntToken.approve(address(townHall), lockUpAmount); // gas saving - approved infinitely on construction
 
@@ -140,6 +139,7 @@ contract TownHallZap {
     }
 
     // @notice Convert ETH to HUNT and mint Building NFTs in one trasaction
+    // @dev `path` should starts with WETH address
     function convertETHAndMint(bytes calldata path, address mintTo, uint256 count, uint256 amountInMaximum) external payable {
         address inputToken = getInputToken(path);
         address outputToken = getOutputToken(path);
