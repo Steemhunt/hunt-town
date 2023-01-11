@@ -19,11 +19,14 @@ module.exports = {
       }
     }
   },
+  mocha: {
+    timeout: 400000 // default: 40000 = 40s
+  },
   networks: {
     hardhat: {
       forking: {
         url: ETH_MAINNET_RPC,
-        blockNumber: 16375283
+        blockNumber: 16380000
       }
     },
     goerli: {

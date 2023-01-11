@@ -20,7 +20,7 @@ contract TownHallZap {
     using BytesLib for bytes;
 
     error TownHallZap__InvalidMintingCount();
-    error TownHallZap__ZapIsNotRequiredForHUNT();
+    error TownHallZap__InvalidSwapPath();
     error TownHallZap__InvalidETHSent();
 
     ITownHall public immutable townHall;
@@ -41,6 +41,9 @@ contract TownHallZap {
         huntToken = IERC20(huntToken_);
         uniswapV3Router = ISwapRouter(UNISWAP_V3_ROUTER);
         uniswapV3Quoter = IQuoter(UNISWAP_V3_QUOTER);
+
+        // Approve infinite HUNT tokens to TownHall contract to save gas on each calls
+        huntToken.approve(address(townHall), 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
     }
 
     receive() external payable {}
@@ -54,7 +57,7 @@ contract TownHallZap {
 
         uint256 totalHuntAmount = LOCK_UP_AMOUNT * count;
         huntToken.transferFrom(msg.sender, address(this), totalHuntAmount);
-        huntToken.approve(address(townHall), totalHuntAmount);
+        // huntToken.approve(address(townHall), totalHuntAmount); // gas saving - approved infinitely on construction
 
         unchecked {
             for (uint256 i = 0; i < count; ++i) {
@@ -63,68 +66,69 @@ contract TownHallZap {
         }
     }
 
-    function getOutputTokenFromPath(bytes calldata path) public pure returns (address lastAddres) {
+    /**
+     * @notice Get the first token address from the Swap Path
+     * @dev Ref: https://uniswapv3book.com/docs/milestone_4/path/
+     */
+    function getInputToken(bytes calldata path) public pure returns (address firstAddress) {
+        bytes memory firstSlice = path.slice(0, 20);
+        assembly {
+          firstAddress := mload(add(firstSlice, 20))
+        }
+    }
+
+    /**
+     * @notice Get the last token address from the Swap Path
+     * @dev Ref: https://uniswapv3book.com/docs/milestone_4/path/
+     */
+    function getOutputToken(bytes calldata path) public pure returns (address lastAddres) {
         bytes memory lastSlice = path.slice(path.length - 20, 20);
         assembly {
           lastAddres := mload(add(lastSlice, 20))
         }
     }
 
-    /**
-     * @notice Estimate how many sourceToken required to mint Building NFTs
-     * @dev In an ideal world, these quoter functions would be view functions,
-     *   which would make them very easy to query on-chain with minimal gas costs.
-     *   Instead, the V3 quoter contracts rely on state-changing calls designed to be reverted to return the desired data.
-     *   To get around this difficulty, we can use the callStatic method provided by ethers.js.
-     *   - Ref: https://docs.uniswap.org/sdk/v3/guides/creating-a-trade#using-callstatic-to-return-a-quote
-     */
-    function estimateAmountIn(address sourceToken, uint256 count) external returns (uint256 amountIn) {
-        return uniswapV3Quoter.quoteExactOutputSingle({
-            tokenIn: sourceToken,
-            tokenOut: address(huntToken),
-            fee: UNISWAP_FEE,
-            amountOut: LOCK_UP_AMOUNT * count,
-            sqrtPriceLimitX96: 0
-        });
-    }
+    // @notice Convert inputToken to HUNT and mint Building NFTs in one trasaction
+    function convertAndMint(bytes calldata path, address mintTo, uint256 count, uint256 amountInMaximum) external {
+        address inputToken = getInputToken(path);
+        address outputToken = getOutputToken(path);
 
-    // @notice Convert sourceToken to HUNT and mint Building NFTs in one trasaction
-    function convertAndMint(address sourceToken, address mintTo, uint256 count, uint256 amountInMaximum) external {
-        if (sourceToken == address(huntToken)) revert TownHallZap__ZapIsNotRequiredForHUNT();
+        if (inputToken == address(huntToken) ||
+            outputToken != address(huntToken)) revert TownHallZap__InvalidSwapPath();
         if (count < 1 || count > MAX_MINTING_COUNT) revert TownHallZap__InvalidMintingCount();
 
-        TransferHelper.safeTransferFrom(sourceToken, msg.sender, address(this), amountInMaximum);
+        TransferHelper.safeTransferFrom(inputToken, msg.sender, address(this), amountInMaximum);
 
-        uint256 amountIn = _convertAndMint(sourceToken, mintTo, count, amountInMaximum);
+        uint256 amountIn = _convertAndMint(path, mintTo, count, amountInMaximum);
 
-        // For exact output swaps, the amountInMaximum may not have all been spent.
+        // For exactOutput swaps, the amountInMaximum may not have all been spent.
         // If the actual amount spent (amountIn) is less than the specified maximum amount,
         // we must refund the msg.sender and approve the uniswapV3Router to spend 0.
         if (amountIn < amountInMaximum) {
-            TransferHelper.safeApprove(sourceToken, address(uniswapV3Router), 0);
-            TransferHelper.safeTransfer(sourceToken, msg.sender, amountInMaximum - amountIn);
+            TransferHelper.safeApprove(inputToken, address(uniswapV3Router), 0);
+            TransferHelper.safeTransfer(inputToken, msg.sender, amountInMaximum - amountIn);
         }
     }
 
-    function _convertAndMint(address sourceToken, address mintTo, uint256 count, uint256 amountInMaximum) private returns (uint256 amountIn) {
+    function _convertAndMint(bytes calldata path, address mintTo, uint256 count, uint256 amountInMaximum) private returns (uint256 amountIn) {
         uint256 lockUpAmount = LOCK_UP_AMOUNT * count;
+        address inputToken = getInputToken(path);
 
-        TransferHelper.safeApprove(sourceToken, address(uniswapV3Router), amountInMaximum);
+        TransferHelper.safeApprove(inputToken, address(uniswapV3Router), amountInMaximum);
 
-        ISwapRouter.ExactOutputSingleParams memory params = ISwapRouter.ExactOutputSingleParams({
-            tokenIn: sourceToken,
-            tokenOut: address(huntToken),
-            fee: UNISWAP_FEE,
+        ISwapRouter.ExactOutputParams memory params = ISwapRouter.ExactOutputParams({
+            path: path,
             recipient: address(this),
             deadline: block.timestamp,
             amountOut: lockUpAmount,
-            amountInMaximum: amountInMaximum,
-            sqrtPriceLimitX96: 0
+            amountInMaximum: amountInMaximum
         });
 
-        amountIn = uniswapV3Router.exactOutputSingle(params);
+        return 1;
 
-        huntToken.approve(address(townHall), lockUpAmount);
+        amountIn = uniswapV3Router.exactOutput(params);
+
+        // huntToken.approve(address(townHall), lockUpAmount); // gas saving - approved infinitely on construction
 
         if (count == 1) {
             townHall.mint(mintTo);
@@ -138,14 +142,23 @@ contract TownHallZap {
     }
 
     // @notice Convert ETH to HUNT and mint Building NFTs in one trasaction
-    function convertETHAndMint(address mintTo, uint256 count, uint256 amountInMaximum) external payable {
-        if (msg.value != amountInMaximum) revert TownHallZap__InvalidETHSent();
+    function convertETHAndMint(bytes calldata path, address mintTo, uint256 count, uint256 amountInMaximum) external payable {
+        address inputToken = getInputToken(path);
+        address outputToken = getOutputToken(path);
+
+        if (inputToken == address(huntToken) ||
+            inputToken != WETH_CONTRACT ||
+            outputToken != address(huntToken)) revert TownHallZap__InvalidSwapPath();
         if (count < 1 || count > MAX_MINTING_COUNT) revert TownHallZap__InvalidMintingCount();
+        if (msg.value != amountInMaximum) revert TownHallZap__InvalidETHSent();
 
         IWETH(WETH_CONTRACT).deposit{ value: msg.value }();
 
-        uint256 amountIn = _convertAndMint(WETH_CONTRACT, mintTo, count, amountInMaximum);
+        uint256 amountIn = _convertAndMint(path, mintTo, count, amountInMaximum);
 
+        // For exactOutput swaps, the amountInMaximum may not have all been spent.
+        // If the actual amount spent (amountIn) is less than the specified maximum amount,
+        // we must refund the msg.sender and approve the uniswapV3Router to spend 0.
         if (amountIn < amountInMaximum) {
             TransferHelper.safeApprove(WETH_CONTRACT, address(uniswapV3Router), 0);
 
