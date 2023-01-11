@@ -93,8 +93,8 @@ contract TownHallZap {
         address inputToken = getInputToken(path);
         address outputToken = getOutputToken(path);
 
-        if (inputToken == address(huntToken) ||
-            outputToken != address(huntToken)) revert TownHallZap__InvalidSwapPath();
+        if (inputToken == address(huntToken)) revert TownHallZap__InvalidSwapPath();
+        if (outputToken != address(huntToken)) revert TownHallZap__InvalidSwapPath();
         if (count < 1 || count > MAX_MINTING_COUNT) revert TownHallZap__InvalidMintingCount();
 
         TransferHelper.safeTransferFrom(inputToken, msg.sender, address(this), amountInMaximum);
@@ -144,9 +144,9 @@ contract TownHallZap {
         address inputToken = getInputToken(path);
         address outputToken = getOutputToken(path);
 
-        if (inputToken == address(huntToken) ||
-            inputToken != WETH_CONTRACT ||
-            outputToken != address(huntToken)) revert TownHallZap__InvalidSwapPath();
+        if (inputToken == address(huntToken)) revert TownHallZap__InvalidSwapPath();
+        if (inputToken != WETH_CONTRACT) revert TownHallZap__InvalidSwapPath();
+        if (outputToken != address(huntToken)) revert TownHallZap__InvalidSwapPath();
         if (count < 1 || count > MAX_MINTING_COUNT) revert TownHallZap__InvalidMintingCount();
         if (msg.value != amountInMaximum) revert TownHallZap__InvalidETHSent();
 
