@@ -8,7 +8,7 @@ const { encodeRouteToPath } = require('@uniswap/v3-sdk');
 const { encodeMixedRouteToPath, MixedRouteSDK, Protocol } = require('@uniswap/router-sdk');
 
 describe('TownHallZap - Convert', function () {
-  let townHallZap, townHall, building, huntToken, usdcToken, wethToken;
+  let townHallZap, townHall, building, huntToken, usdcToken;
   let lockUpAmount;
   let alice, impersonatedSigner;
 
@@ -28,7 +28,6 @@ describe('TownHallZap - Convert', function () {
 
     const huntToken = await hre.ethers.getContractAt(IERC20_SOURCE, HUNT_ADDRESS);
     const usdcToken = await hre.ethers.getContractAt(IERC20_SOURCE, USDC_ADDRESS);
-    const wethToken = await hre.ethers.getContractAt(IERC20_SOURCE, WETH_ADDRESS);
 
     const TownHall = await ethers.getContractFactory('TownHall');
     const townHall = await TownHall.deploy(building.address, huntToken.address);
@@ -37,7 +36,7 @@ describe('TownHallZap - Convert', function () {
     const TownHallZap = await ethers.getContractFactory('TownHallZap');
     const townHallZap = await TownHallZap.deploy(townHall.address, huntToken.address);
 
-    return [townHallZap, townHall, building, huntToken, usdcToken, wethToken];
+    return [townHallZap, townHall, building, huntToken, usdcToken];
   }
 
   async function getSwapPath(inputToken) {
@@ -95,7 +94,7 @@ describe('TownHallZap - Convert', function () {
   }
 
   beforeEach(async function () {
-    [townHallZap, townHall, building, huntToken, usdcToken, wethToken] = await loadFixture(deployFixtures);
+    [townHallZap, townHall, building, huntToken, usdcToken] = await loadFixture(deployFixtures);
     lockUpAmount = String(await townHall.LOCK_UP_AMOUNT());
     [, alice] = await ethers.getSigners();
     impersonatedSigner = await ethers.getImpersonatedSigner(TEST_WALLET);
@@ -177,9 +176,40 @@ describe('TownHallZap - Convert', function () {
       });
     });
 
-    // TODO: Revert & Error handling
-    // TODO: Edge cases
-  });
+    describe('Edge Cases', function () {
+      it('should revert if the Swap Path starts with HUNT token', async function () {
+        const path = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc200003c9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5';
+
+        await expect(
+          townHallZap.connect(impersonatedSigner).convertAndMint(path, alice.address, 1, MAX_USDC_PER_BUILDING)
+        ).to.be.revertedWithCustomError(townHallZap, 'TownHallZap__InvalidInputToken');
+      });
+
+      it('should revert if the Swap Path does not end with HUNT token', async function () {
+        const path = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc200003c2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599';
+
+        await expect(
+          townHallZap.connect(impersonatedSigner).convertAndMint(path, alice.address, 1, MAX_USDC_PER_BUILDING)
+        ).to.be.revertedWithCustomError(townHallZap, 'TownHallZap__InvalidOutputToken');
+      });
+
+      it('should revert if mintingCount is 0', async function () {
+        await expect(
+          townHallZap
+            .connect(impersonatedSigner)
+            .convertAndMint(await getSwapPath('usdc'), alice.address, 0, MAX_USDC_PER_BUILDING)
+        ).to.be.revertedWithCustomError(townHallZap, 'TownHallZap__InvalidMintingCount');
+      });
+
+      it('should revert if mintingCount is over the maximum value', async function () {
+        await expect(
+          townHallZap
+            .connect(impersonatedSigner)
+            .convertAndMint(await getSwapPath('usdc'), alice.address, 201, MAX_USDC_PER_BUILDING)
+        ).to.be.revertedWithCustomError(townHallZap, 'TownHallZap__InvalidMintingCount');
+      });
+    });
+  }); // Edge Cases
 
   describe('Convert ETH and Mint', function () {
     describe('Normal Flow', function () {
@@ -252,7 +282,56 @@ describe('TownHallZap - Convert', function () {
       });
     });
 
-    // TODO: Revert & Error handling
-    // TODO: Edge cases
+    describe('Edge Cases', function () {
+      it('should revert if the Swap Path starts with other than WETH', async function () {
+        await expect(
+          townHallZap
+            .connect(impersonatedSigner)
+            .convertETHAndMint(await getSwapPath('usdc'), alice.address, 1, MAX_ETH_PER_BUILDING, {
+              value: MAX_ETH_PER_BUILDING
+            })
+        ).to.be.revertedWithCustomError(townHallZap, 'TownHallZap__InvalidInputToken');
+      });
+
+      it('should revert if the Swap Path does not end with HUNT token', async function () {
+        const path = '0xdAC17F958D2ee523a2206206994597C13D831ec700003cC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
+
+        await expect(
+          townHallZap
+            .connect(impersonatedSigner)
+            .convertETHAndMint(path, alice.address, 1, MAX_ETH_PER_BUILDING, { value: MAX_ETH_PER_BUILDING })
+        ).to.be.revertedWithCustomError(townHallZap, 'TownHallZap__InvalidOutputToken');
+      });
+
+      it('should revert if mintingCount is 0', async function () {
+        await expect(
+          townHallZap
+            .connect(impersonatedSigner)
+            .convertETHAndMint(await getSwapPath('weth'), alice.address, 0, MAX_ETH_PER_BUILDING, {
+              value: MAX_ETH_PER_BUILDING
+            })
+        ).to.be.revertedWithCustomError(townHallZap, 'TownHallZap__InvalidMintingCount');
+      });
+
+      it('should revert if mintingCount is over the maximum value', async function () {
+        await expect(
+          townHallZap
+            .connect(impersonatedSigner)
+            .convertETHAndMint(await getSwapPath('weth'), alice.address, 201, MAX_ETH_PER_BUILDING, {
+              value: MAX_ETH_PER_BUILDING
+            })
+        ).to.be.revertedWithCustomError(townHallZap, 'TownHallZap__InvalidMintingCount');
+      });
+
+      it('should revert if msg.value does not match with the amountInMaximum', async function () {
+        await expect(
+          townHallZap
+            .connect(impersonatedSigner)
+            .convertETHAndMint(await getSwapPath('weth'), alice.address, 1, MAX_ETH_PER_BUILDING, {
+              value: MAX_ETH_PER_BUILDING + 1n
+            })
+        ).to.be.revertedWithCustomError(townHallZap, 'TownHallZap__InvalidETHSent');
+      });
+    }); // Edge Cases
   });
 });

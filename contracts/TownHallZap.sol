@@ -20,7 +20,8 @@ contract TownHallZap {
     using BytesLib for bytes;
 
     error TownHallZap__InvalidMintingCount();
-    error TownHallZap__InvalidSwapPath();
+    error TownHallZap__InvalidInputToken();
+    error TownHallZap__InvalidOutputToken();
     error TownHallZap__InvalidETHSent();
 
     ITownHall public immutable townHall;
@@ -93,8 +94,8 @@ contract TownHallZap {
         address inputToken = getInputToken(path);
         address outputToken = getOutputToken(path);
 
-        if (inputToken == address(huntToken)) revert TownHallZap__InvalidSwapPath();
-        if (outputToken != address(huntToken)) revert TownHallZap__InvalidSwapPath();
+        if (inputToken == address(huntToken)) revert TownHallZap__InvalidInputToken();
+        if (outputToken != address(huntToken)) revert TownHallZap__InvalidOutputToken();
         if (count < 1 || count > MAX_MINTING_COUNT) revert TownHallZap__InvalidMintingCount();
 
         TransferHelper.safeTransferFrom(inputToken, msg.sender, address(this), amountInMaximum);
@@ -144,9 +145,8 @@ contract TownHallZap {
         address inputToken = getInputToken(path);
         address outputToken = getOutputToken(path);
 
-        if (inputToken == address(huntToken)) revert TownHallZap__InvalidSwapPath();
-        if (inputToken != WETH_CONTRACT) revert TownHallZap__InvalidSwapPath();
-        if (outputToken != address(huntToken)) revert TownHallZap__InvalidSwapPath();
+        if (inputToken != WETH_CONTRACT) revert TownHallZap__InvalidInputToken();
+        if (outputToken != address(huntToken)) revert TownHallZap__InvalidOutputToken();
         if (count < 1 || count > MAX_MINTING_COUNT) revert TownHallZap__InvalidMintingCount();
         if (msg.value != amountInMaximum) revert TownHallZap__InvalidETHSent();
 
