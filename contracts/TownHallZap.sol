@@ -3,7 +3,6 @@ pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
-import "@uniswap/v3-periphery/contracts/interfaces/IQuoter.sol";
 import "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
 import "solidity-bytes-utils/contracts/BytesLib.sol";
 
@@ -31,8 +30,6 @@ contract TownHallZap {
 
     address private constant WETH_CONTRACT = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address private constant UNISWAP_V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
-    // address private constant UNISWAP_V3_QUOTER = 0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6;
-    uint24 private constant UNISWAP_FEE = 3000; // The fee of the token pool to consider for the pair
 
     uint256 public constant LOCK_UP_AMOUNT = 1e21; // 1,000 HUNT per NFT minting
     uint256 public constant MAX_MINTING_COUNT = 200;
@@ -41,7 +38,6 @@ contract TownHallZap {
         townHall = ITownHall(townHall_);
         huntToken = IERC20(huntToken_);
         uniswapV3Router = ISwapRouter(UNISWAP_V3_ROUTER);
-        // uniswapV3Quoter = IQuoter(UNISWAP_V3_QUOTER);
 
         // Approve infinite HUNT tokens to TownHall contract to save gas on each calls
         huntToken.approve(address(townHall), 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
