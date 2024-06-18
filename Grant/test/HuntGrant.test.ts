@@ -7,6 +7,10 @@ import { TOWN_HALL_ADDRESS, BUILDING_NFT_ADDRESS, HUNT_ADDRESS } from "./utils";
 import { abi as ERC721_ABI } from "@openzeppelin/contracts/build/contracts/ERC721.json";
 import { abi as ERC20_ABI } from "@openzeppelin/contracts/build/contracts/ERC20.json";
 
+// NOTE: hardhat-chai-matchers is not officially supported yet, so adding a custom npm package here
+// REF: https://github.com/NomicFoundation/hardhat/issues/4874
+require("hardhat-chai-matchers-viem");
+
 const INITIAL_HUNT_BALANCE = parseEther("100000");
 
 describe("HuntGrant", function () {
@@ -72,6 +76,7 @@ describe("HuntGrant", function () {
 
   describe("Deposit and withdraw", function () {
     const DEPOSIT_AMOUNT = parseEther("34000");
+
     beforeEach(async function () {
       await huntToken.write.approve([huntGrant.address, DEPOSIT_AMOUNT]);
       await huntGrant.write.deposit([DEPOSIT_AMOUNT]);
@@ -94,6 +99,19 @@ describe("HuntGrant", function () {
       );
     });
 
+    it("should emit Deposit event on deposit", async function () {
+      await huntToken.write.approve([huntGrant.address, DEPOSIT_AMOUNT]);
+      await expect(huntGrant.write.deposit([DEPOSIT_AMOUNT]))
+        .to.emit(huntGrant, "Deposit")
+        .withArgs(getAddress(owner.account.address), DEPOSIT_AMOUNT);
+    });
+
+    it("should emit EmergencyWithdraw event on emergency withdraw", async function () {
+      await expect(huntGrant.write.emergencyWithdraw())
+        .to.emit(huntGrant, "EmergencyWithdraw")
+        .withArgs(getAddress(owner.account.address), DEPOSIT_AMOUNT);
+    });
+
     describe("Set Winners", function () {
       beforeEach(async function () {
         this.SEASON_PARAMS = [
@@ -101,6 +119,12 @@ describe("HuntGrant", function () {
           [getAddress(alice.account.address), getAddress(bob.account.address), getAddress(carol.account.address)],
           [parseEther("20000"), parseEther("10000"), parseEther("4000")]
         ];
+      });
+
+      it("should emit SetWinners event on setting winners", async function () {
+        await expect(huntGrant.write.setWinners(this.SEASON_PARAMS))
+          .to.emit(huntGrant, "SetWinners")
+          .withArgs(1n, this.SEASON_PARAMS[1], this.SEASON_PARAMS[2]);
       });
 
       describe("Normal Flow", function () {
@@ -120,7 +144,9 @@ describe("HuntGrant", function () {
           expect(maxGrantAmounts).to.deep.equal(this.SEASON_PARAMS[2]);
           expect(claimedTypes).to.deep.equal([0, 0, 0]);
         });
+      }); // Normal Flow
 
+      describe("Set Winners - Edge cases", function () {
         it("should not be able to set winners by non-owner", async function () {
           await expect(
             huntGrant.write.setWinners(this.SEASON_PARAMS, {
@@ -128,9 +154,7 @@ describe("HuntGrant", function () {
             })
           ).to.be.rejectedWith("OwnableUnauthorizedAccount");
         });
-      }); // Normal Flow
 
-      describe("Set Winners - Edge cases", function () {
         it("should not be able to set the season id = 0", async function () {
           await expect(
             huntGrant.write.setWinners([
@@ -230,7 +254,13 @@ describe("HuntGrant", function () {
           expect(await huntToken.read.balanceOf([carol.account.address])).to.equal(parseEther("2000"));
         });
 
-        describe.only("Claim - Edge cases", function () {
+        it("should emit Claim event on claiming", async function () {
+          await expect(huntGrant.write.claim([1n, 1n], { account: alice.account }))
+            .to.emit(huntGrant, "Claim")
+            .withArgs(getAddress(alice.account.address), 1n, 0n, 1n, 20n, 0n);
+        });
+
+        describe("Claim - Edge cases", function () {
           it("should not be able to claim with invalid season id", async function () {
             await expect(huntGrant.write.claim([0n, 1], { account: alice.account })).to.be.rejectedWith("NotAWinner");
           });

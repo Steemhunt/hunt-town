@@ -41,7 +41,7 @@ contract HuntGrant is Ownable {
     uint256 public lastSeason; // currentSeason = lastSeason + 1;
 
     event Deposit(address indexed user, uint256 huntAmount);
-    event SetWinners(uint256 indexed season, address[3] winners);
+    event SetWinners(uint256 indexed season, address[3] winners, uint256[3] maxGrantAmounts);
     event Claim(
         address indexed user,
         uint256 indexed season,
@@ -87,7 +87,7 @@ contract HuntGrant is Ownable {
         seasons[seasonId].winners = winners;
         seasons[seasonId].maxGrantAmounts = maxGrantAmounts;
 
-        emit SetWinners(seasonId, winners);
+        emit SetWinners(seasonId, winners, maxGrantAmounts);
     }
 
     function claim(uint256 seasonId, uint8 claimType) external {
