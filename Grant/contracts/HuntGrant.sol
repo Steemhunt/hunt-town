@@ -125,6 +125,7 @@ contract HuntGrant is Ownable {
         }
 
         season.claimedTypes[ranking] = claimType;
+        season.grantDistributed += buildingCount * LOCK_UP_AMOUNT + grantAmount;
 
         if (buildingCount > 0) {
             if (!_mintBuildings(buildingCount)) revert MintBuildingsFailed();

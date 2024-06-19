@@ -260,6 +260,37 @@ describe("HuntGrant", function () {
             .withArgs(getAddress(alice.account.address), 1n, 0n, 1n, 20n, 0n);
         });
 
+        describe("After Claimed", function () {
+          beforeEach(async function () {
+            await huntGrant.write.claim([1n, 1], { account: alice.account }); // 20 buildings = 20,000 HUNT
+            await huntGrant.write.claim([1n, 2], { account: bob.account }); // 5 buildings + 2500 HUNT = 7,500 HUNT
+            await huntGrant.write.claim([1n, 3], { account: carol.account }); // 2,000 HUNT
+          });
+
+          it("should record claimedTypes correctly", async function () {
+            const { claimedTypes } = await huntGrant.read.getSeason([1n]);
+            expect(claimedTypes).to.deep.equal([1, 2, 3]);
+          });
+
+          it("should record the grantDistributed correctly", async function () {
+            const { grantDistributed } = await huntGrant.read.getSeason([1n]);
+            expect(grantDistributed).to.equal(parseEther("29500"));
+          });
+
+          it("should have the correct balance of HUNT", async function () {
+            expect(await huntToken.read.balanceOf([huntGrant.address])).to.equal(parseEther("4500"));
+          });
+
+          it("should not touch winners data", async function () {
+            const { winners } = await huntGrant.read.getSeason([1n]);
+            expect(winners).to.deep.equal([
+              getAddress(alice.account.address),
+              getAddress(bob.account.address),
+              getAddress(carol.account.address)
+            ]);
+          });
+        });
+
         describe("Claim - Edge cases", function () {
           it("should not be able to claim with invalid season id", async function () {
             await expect(huntGrant.write.claim([0n, 1], { account: alice.account })).to.be.rejectedWith("NotAWinner");
