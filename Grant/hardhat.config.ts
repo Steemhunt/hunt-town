@@ -19,6 +19,13 @@ const config: HardhatUserConfig = {
         blockNumber: 20115774
       }
     }
+  },
+  gasReporter: {
+    // FIXME: not working properly with viem?
+    enabled: true,
+    currency: "USD",
+    gasPrice: 15,
+    coinmarketcap: undefined
   }
 };
 

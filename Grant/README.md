@@ -1,13 +1,9 @@
-# Sample Hardhat Project
+# Hunt Grant
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+An experimental grant DAO project in the form of tipping, utilizing the Farcaster community.
 
-Try running some of the following tasks:
+## Run Unit Tests
 
-```shell
-npx hardhat help
+```sh
 npx hardhat test
-REPORT_GAS=true npx hardhat test
-npx hardhat node
-npx hardhat ignition deploy ./ignition/modules/Lock.ts
 ```
