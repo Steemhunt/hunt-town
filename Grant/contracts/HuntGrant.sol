@@ -33,7 +33,8 @@ contract HuntGrant is Ownable {
 
     struct Season {
         uint256 grantDistributed;
-        address[3] winners;
+        uint64[3] fids; // INFO: Farcaster IDs
+        address[3] winners; // The last wallet bound to the FID
         uint256[3] maxGrantAmounts;
         uint8[3] claimedTypes; // 0: not claimed, 1: 100% Buildings, 2: 50% Buildings, 3: 100% HUNT
     }
@@ -41,7 +42,7 @@ contract HuntGrant is Ownable {
     uint256 public lastSeason; // currentSeason = lastSeason + 1;
 
     event Deposit(address indexed user, uint256 huntAmount);
-    event SetWinners(uint256 indexed season, address[3] winners, uint256[3] maxGrantAmounts);
+    event SetWinners(uint256 indexed season, uint64[3] fids, address[3] winners, uint256[3] maxGrantAmounts);
     event Claim(
         address indexed user,
         uint256 indexed season,
@@ -73,21 +74,23 @@ contract HuntGrant is Ownable {
 
     function setWinners(
         uint256 seasonId,
+        uint64[3] calldata fids,
         address[3] calldata winners,
         uint256[3] calldata maxGrantAmounts
     ) external onlyOwner {
         if (seasons[seasonId].winners[0] != address(0)) revert SeasonDataAlreadyExists();
         if (seasonId < 1 || lastSeason != seasonId - 1) revert InvalidSeasonId();
 
-        lastSeason = seasonId; // curent season becomes last season
+        lastSeason = seasonId; // curent season becomes the last season
 
         uint256 totalGrantAmount = maxGrantAmounts[0] + maxGrantAmounts[1] + maxGrantAmounts[2];
         if (totalGrantAmount > HUNT.balanceOf(address(this))) revert NotEnoughGrantBalance();
 
+        seasons[seasonId].fids = fids;
         seasons[seasonId].winners = winners;
         seasons[seasonId].maxGrantAmounts = maxGrantAmounts;
 
-        emit SetWinners(seasonId, winners, maxGrantAmounts);
+        emit SetWinners(seasonId, fids, winners, maxGrantAmounts);
     }
 
     function claim(uint256 seasonId, uint8 claimType) external {

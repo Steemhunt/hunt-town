@@ -46,23 +46,13 @@ describe("HuntGrant", function () {
       client: owner
     });
 
-    return [huntGrant, huntToken, buildingNFT, owner, alice, bob, carol, david, publicClient];
+    return [huntGrant, huntToken, buildingNFT, owner, alice, bob, carol, publicClient];
   }
 
-  let huntGrant: any,
-    huntToken: any,
-    buildingNFT: any,
-    owner: any,
-    alice: any,
-    bob: any,
-    carol: any,
-    david: any,
-    publicClient: any;
+  let huntGrant: any, huntToken: any, buildingNFT: any, owner: any, alice: any, bob: any, carol: any, publicClient: any;
 
   beforeEach(async function () {
-    [huntGrant, huntToken, buildingNFT, owner, alice, bob, carol, david, publicClient] = await loadFixture(
-      deployFixtures
-    );
+    [huntGrant, huntToken, buildingNFT, owner, alice, bob, carol, publicClient] = await loadFixture(deployFixtures);
   });
 
   describe("Deployment", function () {
@@ -116,6 +106,7 @@ describe("HuntGrant", function () {
       beforeEach(async function () {
         this.SEASON_PARAMS = [
           1n,
+          [8151n, 8152n, 8942n],
           [getAddress(alice.account.address), getAddress(bob.account.address), getAddress(carol.account.address)],
           [parseEther("20000"), parseEther("10000"), parseEther("4000")]
         ];
@@ -124,7 +115,7 @@ describe("HuntGrant", function () {
       it("should emit SetWinners event on setting winners", async function () {
         await expect(huntGrant.write.setWinners(this.SEASON_PARAMS))
           .to.emit(huntGrant, "SetWinners")
-          .withArgs(1n, this.SEASON_PARAMS[1], this.SEASON_PARAMS[2]);
+          .withArgs(...this.SEASON_PARAMS);
       });
 
       describe("Normal Flow", function () {
@@ -137,11 +128,14 @@ describe("HuntGrant", function () {
         });
 
         it("should set winners correctly", async function () {
-          const { grantDistributed, winners, maxGrantAmounts, claimedTypes } = await huntGrant.read.getSeason([1n]);
+          const { grantDistributed, fids, winners, maxGrantAmounts, claimedTypes } = await huntGrant.read.getSeason([
+            1n
+          ]);
 
           expect(grantDistributed).to.equal(0n);
-          expect(winners).to.deep.equal(this.SEASON_PARAMS[1]);
-          expect(maxGrantAmounts).to.deep.equal(this.SEASON_PARAMS[2]);
+          expect(fids).to.deep.equal(this.SEASON_PARAMS[1]);
+          expect(winners).to.deep.equal(this.SEASON_PARAMS[2]);
+          expect(maxGrantAmounts).to.deep.equal(this.SEASON_PARAMS[3]);
           expect(claimedTypes).to.deep.equal([0, 0, 0]);
         });
       }); // Normal Flow
@@ -160,7 +154,8 @@ describe("HuntGrant", function () {
             huntGrant.write.setWinners([
               0n, // Prev season
               this.SEASON_PARAMS[1],
-              this.SEASON_PARAMS[2]
+              this.SEASON_PARAMS[2],
+              this.SEASON_PARAMS[3]
             ])
           ).to.be.rejectedWith("InvalidSeasonId");
         });
@@ -170,7 +165,8 @@ describe("HuntGrant", function () {
             huntGrant.write.setWinners([
               2n, // must be the current season id
               this.SEASON_PARAMS[1],
-              this.SEASON_PARAMS[2]
+              this.SEASON_PARAMS[2],
+              this.SEASON_PARAMS[3]
             ])
           ).to.be.rejectedWith("InvalidSeasonId");
         });
@@ -182,7 +178,8 @@ describe("HuntGrant", function () {
             huntGrant.write.setWinners([
               1n, // must be the current season id
               this.SEASON_PARAMS[1],
-              this.SEASON_PARAMS[2]
+              this.SEASON_PARAMS[2],
+              this.SEASON_PARAMS[3]
             ])
           ).to.be.rejectedWith("SeasonDataAlreadyExists");
         });
@@ -192,6 +189,7 @@ describe("HuntGrant", function () {
             huntGrant.write.setWinners([
               1n, // must be the current season id
               this.SEASON_PARAMS[1],
+              this.SEASON_PARAMS[2],
               [parseEther("20000"), parseEther("10000"), parseEther("5000")]
             ])
           ).to.be.rejectedWith("NotEnoughGrantBalance");
