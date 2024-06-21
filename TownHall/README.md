@@ -8,6 +8,12 @@ Hunt Town is a web3 builders' guild where builders come together to contribute t
   - Members with verified Building NFTs will receive BUILD points in the Hunt Town Discord group everyday
 - TownHall.sol: A front facing contract that mints / burns Building NFTs.
 
+### Deployed Addresses
+- TownHall: [0xb09A1410cF4C49F92482F5cd2CbF19b638907193](https://etherscan.io/address/0xb09A1410cF4C49F92482F5cd2CbF19b638907193#code)
+- TownZap: [0xf855C0C7BBb9C9094Fea6A10e052953C8fCa985b](https://etherscan.io/address/0xf855C0C7BBb9C9094Fea6A10e052953C8fCa985b#code)
+- Building NFT: [0x0c9Bb1ffF512a5B4F01aCA6ad964Ec6D7fC60c96](https://etherscan.io/address/0x0c9Bb1ffF512a5B4F01aCA6ad964Ec6D7fC60c96#code)
+- Mini Building NFT (Deployed on Base via Mint Club V2 protocol): [0x475f8E3eE5457f7B4AAca7E989D35418657AdF2a](https://mint.club/nft/base/MINIBD)
+
 ## 🧪 Test
 ```bash
 npx hardhat test
