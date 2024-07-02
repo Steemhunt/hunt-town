@@ -199,7 +199,7 @@ describe("TipperGrant", function () {
       await approveAndDeposit(DEPOSIT_AMOUNT);
     });
 
-    it.only("should set grant data correctly", async function () {
+    it("should set grant data correctly", async function () {
       await tipperGrant.write.setGrantData([SEASON_ID, FIDS, WALLETS, GRANT_AMOUNTS]);
     });
   });
