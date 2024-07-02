@@ -32,7 +32,7 @@ contract HuntGrant is Ownable {
     }
 
     struct Season {
-        uint256 grantDistributed;
+        uint256 grantClaimed;
         uint64[3] fids; // INFO: Farcaster IDs
         address[3] winners; // The last wallet bound to the FID
         uint256[3] maxGrantAmounts;
@@ -128,7 +128,7 @@ contract HuntGrant is Ownable {
         }
 
         season.claimedTypes[ranking] = claimType;
-        season.grantDistributed += buildingCount * LOCK_UP_AMOUNT + grantAmount;
+        season.grantClaimed += buildingCount * LOCK_UP_AMOUNT + grantAmount;
 
         if (buildingCount > 0) {
             if (!_mintBuildings(buildingCount)) revert MintBuildingsFailed();

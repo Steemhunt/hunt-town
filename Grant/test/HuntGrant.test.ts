@@ -15,7 +15,7 @@ const INITIAL_HUNT_BALANCE = parseEther("100000");
 
 describe("HuntGrant", function () {
   async function deployFixtures() {
-    const [owner, alice, bob, carol, david] = await hre.viem.getWalletClients();
+    const [owner, alice, bob, carol] = await hre.viem.getWalletClients();
     const { huntGrant } = await ignition.deploy(HuntGrantModule, {
       parameters: {
         HuntGrant: {
@@ -128,11 +128,9 @@ describe("HuntGrant", function () {
         });
 
         it("should set winners correctly", async function () {
-          const { grantDistributed, fids, winners, maxGrantAmounts, claimedTypes } = await huntGrant.read.getSeason([
-            1n
-          ]);
+          const { grantClaimed, fids, winners, maxGrantAmounts, claimedTypes } = await huntGrant.read.getSeason([1n]);
 
-          expect(grantDistributed).to.equal(0n);
+          expect(grantClaimed).to.equal(0n);
           expect(fids).to.deep.equal(this.SEASON_PARAMS[1]);
           expect(winners).to.deep.equal(this.SEASON_PARAMS[2]);
           expect(maxGrantAmounts).to.deep.equal(this.SEASON_PARAMS[3]);
@@ -270,9 +268,9 @@ describe("HuntGrant", function () {
             expect(claimedTypes).to.deep.equal([1, 2, 3]);
           });
 
-          it("should record the grantDistributed correctly", async function () {
-            const { grantDistributed } = await huntGrant.read.getSeason([1n]);
-            expect(grantDistributed).to.equal(parseEther("29500"));
+          it("should record the grantClaimed correctly", async function () {
+            const { grantClaimed } = await huntGrant.read.getSeason([1n]);
+            expect(grantClaimed).to.equal(parseEther("29500"));
           });
 
           it("should have the correct balance of HUNT", async function () {
