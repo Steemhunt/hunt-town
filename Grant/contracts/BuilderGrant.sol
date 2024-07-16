@@ -73,7 +73,7 @@ contract BuilderGrant is Ownable {
     uint256 public lastSeason;
 
     event Deposit(address indexed depositor, uint256 huntAmount);
-    event SetSeasonData(uint256 indexed seasonId, uint256 rankersCount, uint80[3] grantsAmount);
+    event SetSeasonData(uint256 indexed seasonId, uint256 rankersCount, uint16[3] grantsAmount);
     event EmergencyWithdraw(address indexed withdrawer, uint256 huntAmount);
     event ClaimByTop3(
         address indexed claimer,
@@ -106,7 +106,7 @@ contract BuilderGrant is Ownable {
 
     function setSeasonData(
         uint256 seasonId,
-        uint16[3] grantsAmount,
+        uint16[3] calldata grantsAmount,
         uint48[] calldata fids,
         address[] calldata wallets
     ) external onlyOwner {
@@ -122,7 +122,7 @@ contract BuilderGrant is Ownable {
 
         // Check if there are enough ranker data is provided if the 1st ranker donates 100%
         // e.g. If the top grant is 10,000 HUNT, include up to 103 rankers to allow donations to ranks 4-203
-        if (grantsAmount[0] / HUNT_PER_MINI_BUILDING <= (fids.length - 3)) revert InvalidGrantAmount();
+        if (grantsAmount[0] < (fids.length - 3)) revert InvalidGrantAmount();
 
         Season storage season = seasons[seasonId];
         if (season.totalClaimed > 0) revert SeasonDataIsNotUpdateable();
@@ -131,12 +131,12 @@ contract BuilderGrant is Ownable {
         season.grants[0].amount = grantsAmount[0];
         season.grants[1].amount = grantsAmount[1];
         season.grants[2].amount = grantsAmount[2];
-        season.claimStartedAt = block.timestamp;
+        season.claimStartedAt = uint40(block.timestamp);
 
         // Set rankers data
-        season.rankers = new Ranker[](fids.length); // reset ranker data if exists
+        delete season.rankers; // reset ranker data if exists
         for (uint256 i = 0; i < fids.length; ++i) {
-            season.rankers[i] = Ranker(fids[i], wallets[i], 0, new bool[3]());
+            season.rankers.push(Ranker(fids[i], wallets[i], 0, [false, false, false]));
         }
 
         // Set current season -> the last season
@@ -167,7 +167,7 @@ contract BuilderGrant is Ownable {
         address msgSender = _msgSender();
 
         // Check msg.sender is the winner
-        if (season.winners[ranking] != msgSender) revert PermissionDenied();
+        if (season.rankers[ranking].wallet != msgSender) revert PermissionDenied();
 
         // claimType - 0: not claimed yet, 1: 100% self, 2: 50% donation, 3: 100% donation
         uint16 amountForSelf;
@@ -219,7 +219,7 @@ contract BuilderGrant is Ownable {
         return false;
     }
 
-    function claimableDonationAmount(uint256 seasonId, uint256 ranking) public view returns (uint256 claimableAmount) {
+    function claimableDonationAmount(uint256 seasonId, uint256 ranking) public view returns (uint16 claimableAmount) {
         Season storage season = seasons[seasonId];
 
         if (season.rankers[ranking].claimedAmount > 0) revert DonationAlreadyClaimed();
@@ -227,20 +227,22 @@ contract BuilderGrant is Ownable {
 
         bool[3] storage donationReceived = season.rankers[ranking].donationReceived;
 
-        return donationReceived[0] + donationReceived[1] + donationReceived[2];
+        for (uint256 i = 0; i < 3; ++i) {
+            if (donationReceived[i] == true) {
+                ++claimableAmount;
+            }
+        }
     }
 
     function claimDonation(uint256 seasonId, uint256 ranking) external {
-        uint256 claimableAmount = claimableDonationAmount(seasonId, ranking);
+        uint16 claimableAmount = claimableDonationAmount(seasonId, ranking);
         if (claimableAmount == 0) revert NoDonationToClaim();
 
         Season storage season = seasons[seasonId];
         address msgSender = _msgSender();
-
         if (season.rankers[ranking].wallet != msgSender) revert PermissionDenied();
 
         season.rankers[ranking].claimedAmount += claimableAmount;
-
         if (!_mintBuildings(claimableAmount, msgSender)) revert MintBuildingsFailed();
 
         emit ClaimDonation(msgSender, seasonId, ranking, claimableAmount);
