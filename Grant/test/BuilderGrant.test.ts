@@ -65,10 +65,10 @@ describe("BuilderGrant", function () {
   });
 
   describe("Deposit and withdraw", function () {
-    const DEPOSIT_AMOUNT = parseEther("20000");
+    const DEPOSIT_AMOUNT = parseEther("2000");
 
     beforeEach(async function () {
-      await huntToken.write.approve([builderGrant.address, DEPOSIT_AMOUNT]);
+      await huntToken.write.approve([builderGrant.address, 999999999n * 10n ** 18n]);
       await builderGrant.write.deposit([DEPOSIT_AMOUNT]);
     });
 
@@ -90,7 +90,6 @@ describe("BuilderGrant", function () {
     });
 
     it("should emit Deposit event on deposit", async function () {
-      await huntToken.write.approve([builderGrant.address, DEPOSIT_AMOUNT]);
       await expect(builderGrant.write.deposit([DEPOSIT_AMOUNT]))
         .to.emit(builderGrant, "Deposit")
         .withArgs(getAddress(owner.account.address), DEPOSIT_AMOUNT);
@@ -105,16 +104,16 @@ describe("BuilderGrant", function () {
     describe("Set Season Data", function () {
       beforeEach(async function () {
         // Generate dummy fids, addresses for rankers
-        const fids = Array.from({ length: 100 }, (_, i) => {
+        const fids = Array.from({ length: 10 }, (_, i) => {
           return BigInt(i + 10000);
         });
-        const accounts = Array.from({ length: 100 }, (_, i) => {
+        const accounts = Array.from({ length: 10 }, (_, i) => {
           return `0x${(i + 1).toString().padStart(40, "0")}`;
         });
 
         this.SEASON_PARAMS = [
-          1n,
-          [100n, 60n, 40n],
+          0n,
+          [10n, 6n, 4n],
           [8151n, 8152n, 8942n, ...fids],
           [
             getAddress(alice.account.address),
@@ -128,7 +127,7 @@ describe("BuilderGrant", function () {
       it("should emit SetSeasonData event on setting winners", async function () {
         await expect(builderGrant.write.setSeasonData(this.SEASON_PARAMS))
           .to.emit(builderGrant, "SetSeasonData")
-          .withArgs(1n, 103n, this.SEASON_PARAMS[1]);
+          .withArgs(0n, 13n, this.SEASON_PARAMS[1]);
       });
 
       describe("Normal Flow", function () {
@@ -137,11 +136,11 @@ describe("BuilderGrant", function () {
         });
 
         it("should increase the current season id", async function () {
-          expect(await builderGrant.read.currentSeason()).to.equal(2n);
+          expect(await builderGrant.read.currentSeason()).to.equal(0n);
         });
 
         it("should set season data correctly", async function () {
-          const { claimStartedAt, totalClaimed, grants, rankers } = await builderGrant.read.getSeason([1n]);
+          const { claimStartedAt, totalClaimed, grants, rankers } = await builderGrant.read.getSeason([0n]);
 
           expect(claimStartedAt).to.equal(await time.latest());
           expect(totalClaimed).to.equal(0n);
@@ -166,21 +165,10 @@ describe("BuilderGrant", function () {
           ).to.be.rejectedWith("OwnableUnauthorizedAccount");
         });
 
-        it("should not be able to set the season id = 0", async function () {
-          await expect(
-            builderGrant.write.setSeasonData([
-              0n, // Prev season
-              this.SEASON_PARAMS[1],
-              this.SEASON_PARAMS[2],
-              this.SEASON_PARAMS[3]
-            ])
-          ).to.be.rejectedWith("InvalidSeasonId");
-        });
-
         it("should not be able to set the season id next to the current season", async function () {
           await expect(
             builderGrant.write.setSeasonData([
-              2n, // must be the current season id
+              1n, // must be the current season id
               this.SEASON_PARAMS[1],
               this.SEASON_PARAMS[2],
               this.SEASON_PARAMS[3]
@@ -188,28 +176,50 @@ describe("BuilderGrant", function () {
           ).to.be.rejectedWith("InvalidSeasonId");
         });
 
-        it("cannot overwrite the already declared winners", async function () {
+        it("can overwrite the data if not claimed", async function () {
           await builderGrant.write.setSeasonData(this.SEASON_PARAMS);
 
+          await builderGrant.write.setSeasonData([
+            0n,
+            [8n, 6n, 4n],
+            this.SEASON_PARAMS[2],
+            [
+              getAddress(carol.account.address),
+              getAddress(bob.account.address),
+              getAddress(alice.account.address),
+              ...this.SEASON_PARAMS[3].slice(3)
+            ]
+          ]);
+
+          const { grants, rankers } = await builderGrant.read.getSeason([0n]);
+          expect(grants[0]).to.deep.equal({ claimedType: 0n, amount: 8n });
+          expect(rankers[0].wallet).to.equal(getAddress(carol.account.address));
+        });
+
+        it("should not be able to set grants amount if not even", async function () {
           await expect(
-            builderGrant.write.setSeasonData([
-              1n, // must be the current season id
-              this.SEASON_PARAMS[1],
-              this.SEASON_PARAMS[2],
-              this.SEASON_PARAMS[3]
-            ])
-          ).to.be.rejectedWith("SeasonDataIsNotUpdateable");
+            builderGrant.write.setSeasonData([0n, [9n, 6n, 4n], this.SEASON_PARAMS[2], this.SEASON_PARAMS[3]])
+          ).to.be.rejectedWith("InvalidGrantAmount");
+        });
+
+        it("can NOT overwrite the datat if anyone has claimed", async function () {
+          await builderGrant.write.setSeasonData(this.SEASON_PARAMS);
+
+          await builderGrant.write.claimByTop3([0n, 0, 1], { account: alice.account });
+          await builderGrant.write.deposit([DEPOSIT_AMOUNT]); // To prevent NotEnoughGrantBalance() error comes out first
+
+          await expect(builderGrant.write.setSeasonData(this.SEASON_PARAMS)).to.be.rejectedWith(
+            "SeasonDataIsNotUpdateable"
+          );
         });
 
         it("cannot set the maxGrants params more than the current balance", async function () {
-          await expect(
-            builderGrant.write.setSeasonData([
-              1n, // must be the current season id
-              this.SEASON_PARAMS[1],
-              this.SEASON_PARAMS[2],
-              [parseEther("20000"), parseEther("10000"), parseEther("5000")]
-            ])
-          ).to.be.rejectedWith("NotEnoughGrantBalance");
+          await builderGrant.write.emergencyWithdraw();
+          await builderGrant.write.deposit([DEPOSIT_AMOUNT - 1n]);
+
+          await expect(builderGrant.write.setSeasonData(this.SEASON_PARAMS)).to.be.rejectedWith(
+            "NotEnoughGrantBalance"
+          );
         });
       }); // Set Season Data - Edge cases
 

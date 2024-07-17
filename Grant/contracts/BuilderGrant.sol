@@ -42,15 +42,6 @@ contract BuilderGrant is Ownable {
     IMCV2_Bond public immutable BOND;
     address public immutable MINI_BUILDING_ADDRESS;
 
-    constructor(address bond, address hunt, address miniBuilding) Ownable(msg.sender) {
-        BOND = IMCV2_Bond(bond); // base: 0xc5a076cad94176c2996B32d8466Be1cE757FAa27
-        HUNT = IERC20(hunt); // base: 0x37f0c2915CeCC7e977183B8543Fc0864d03E064C
-        MINI_BUILDING_ADDRESS = miniBuilding; // base: 0x475f8E3eE5457f7B4AAca7E989D35418657AdF2a
-
-        // gas saving - approve infinite HUNT to Bond for minting
-        HUNT.approve(bond, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
-    }
-
     struct Ranker {
         uint48 fid; // INFO: Farcaster ID
         address wallet;
@@ -69,8 +60,7 @@ contract BuilderGrant is Ownable {
         Grant[3] grants;
         Ranker[] rankers;
     }
-    mapping(uint256 => Season) private seasons;
-    uint256 public lastSeason;
+    Season[] private seasons;
 
     event Deposit(address indexed depositor, uint256 huntAmount);
     event SetSeasonData(uint256 indexed seasonId, uint256 rankersCount, uint16[3] grantsAmount);
@@ -85,8 +75,17 @@ contract BuilderGrant is Ownable {
     );
     event ClaimDonation(address indexed claimer, uint256 indexed seasonId, uint256 ranking, uint256 amount);
 
+    constructor(address bond, address hunt, address miniBuilding) Ownable(msg.sender) {
+        BOND = IMCV2_Bond(bond); // base: 0xc5a076cad94176c2996B32d8466Be1cE757FAa27
+        HUNT = IERC20(hunt); // base: 0x37f0c2915CeCC7e977183B8543Fc0864d03E064C
+        MINI_BUILDING_ADDRESS = miniBuilding; // base: 0x475f8E3eE5457f7B4AAca7E989D35418657AdF2a
+
+        // gas saving - approve infinite HUNT to Bond for minting
+        HUNT.approve(bond, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    }
+
     function currentSeason() external view returns (uint256) {
-        return lastSeason + 1; // starts from season 1
+        return seasons.length - 1;
     }
 
     function deposit(uint256 huntAmount) external {
@@ -111,7 +110,6 @@ contract BuilderGrant is Ownable {
         address[] calldata wallets
     ) external onlyOwner {
         // Validate params
-        if (seasonId != lastSeason + 1) revert InvalidSeasonId();
         if (fids.length != wallets.length) revert InvalidRankersParams();
 
         // Check if we have enough HUNT to mint all Mini Building NFTs
@@ -122,10 +120,25 @@ contract BuilderGrant is Ownable {
 
         // Check if there are enough ranker data is provided if the 1st ranker donates 100%
         // e.g. If the top grant is 10,000 HUNT, include up to 103 rankers to allow donations to ranks 4-203
-        if (grantsAmount[0] < (fids.length - 3)) revert InvalidGrantAmount();
+        if (grantsAmount[0] > (fids.length - 3)) revert InvalidGrantAmount();
 
-        Season storage season = seasons[seasonId];
-        if (season.totalClaimed > 0) revert SeasonDataIsNotUpdateable();
+        // Check if the grants amount is even because they have 50% donation option
+        if (grantsAmount[0] % 2 != 0 || grantsAmount[1] % 2 != 0 || grantsAmount[2] % 2 != 0)
+            revert InvalidGrantAmount();
+
+        Season storage season;
+        // Overwriting the last season
+        if (seasons.length > 0 && seasonId == seasons.length - 1) {
+            season = seasons[seasonId];
+            // can't overwrite the data of the season if anyone has claimed
+            if (season.totalClaimed > 0) revert SeasonDataIsNotUpdateable();
+            // Set new season
+        } else if (seasonId == seasons.length) {
+            seasons.push();
+            season = seasons[seasonId];
+        } else {
+            revert InvalidSeasonId();
+        }
 
         // Set grant data
         season.grants[0].amount = grantsAmount[0];
@@ -138,9 +151,6 @@ contract BuilderGrant is Ownable {
         for (uint256 i = 0; i < fids.length; ++i) {
             season.rankers.push(Ranker(fids[i], wallets[i], 0, [false, false, false]));
         }
-
-        // Set current season -> the last season
-        lastSeason = seasonId;
 
         emit SetSeasonData(seasonId, fids.length, grantsAmount);
     }
@@ -243,6 +253,7 @@ contract BuilderGrant is Ownable {
         if (season.rankers[ranking].wallet != msgSender) revert PermissionDenied();
 
         season.rankers[ranking].claimedAmount += claimableAmount;
+        season.totalClaimed += claimableAmount;
         if (!_mintBuildings(claimableAmount, msgSender)) revert MintBuildingsFailed();
 
         emit ClaimDonation(msgSender, seasonId, ranking, claimableAmount);
