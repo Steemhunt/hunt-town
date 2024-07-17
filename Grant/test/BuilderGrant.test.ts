@@ -56,11 +56,8 @@ describe("BuilderGrant", function () {
   });
 
   describe("Deployment", function () {
-    it("should set the lastSeason to 0", async function () {
-      expect(await builderGrant.read.lastSeason()).to.equal(0n);
-    });
-    it("should set the currentSeason to 1", async function () {
-      expect(await builderGrant.read.currentSeason()).to.equal(1n);
+    it("current should be 0", async function () {
+      expect(await builderGrant.read.currentSeason()).to.equal(0n);
     });
   });
 
@@ -136,7 +133,7 @@ describe("BuilderGrant", function () {
         });
 
         it("should increase the current season id", async function () {
-          expect(await builderGrant.read.currentSeason()).to.equal(0n);
+          expect(await builderGrant.read.currentSeason()).to.equal(1n);
         });
 
         it("should set season data correctly", async function () {
@@ -156,7 +153,7 @@ describe("BuilderGrant", function () {
         });
       }); // Normal Flow
 
-      describe.only("Set Season Data - Edge cases", function () {
+      describe("Set Season Data - Edge cases", function () {
         it("should not be able to set winners by non-owner", async function () {
           await expect(
             builderGrant.write.setSeasonData(this.SEASON_PARAMS, {
@@ -229,82 +226,90 @@ describe("BuilderGrant", function () {
         });
 
         it("should claim with 100% self - rank 1st", async function () {
-          await builderGrant.write.claimByTop3([1n, 0, 1], { account: alice.account });
-          expect(await miniBuildingNFT.read.balanceOf([alice.account.address], 1)).to.equal(200n);
+          await builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account });
+          expect(await miniBuildingNFT.read.balanceOf([alice.account.address, 0n])).to.equal(10n);
         });
 
         it("should claim with 50% donation - rank 1st", async function () {
-          await builderGrant.write.claimByTop3([1n, 0, 2], { account: alice.account });
-          expect(await miniBuildingNFT.read.balanceOf([alice.account.address], 1)).to.equal(100n);
+          await builderGrant.write.claimByTop3([0n, 0n, 2n], { account: alice.account });
+          expect(await miniBuildingNFT.read.balanceOf([alice.account.address, 0n])).to.equal(5n);
           // Check donations
-          const { rankers } = await builderGrant.read.getSeason([1n]);
-          for (let i = 3; i < 103; i++) {
+          const { rankers } = await builderGrant.read.getSeason([0n]);
+          for (let i = 3; i < 8; i++) {
             expect(rankers[i].donationReceived[0]).to.be.true;
+          }
+          for (let i = 8; i < 13; i++) {
+            expect(rankers[i].donationReceived[0]).to.be.false;
           }
         });
 
         it("should claim with 100% donation - rank 1st", async function () {
-          await builderGrant.write.claimByTop3([1n, 0, 3], { account: alice.account });
+          await builderGrant.write.claimByTop3([0n, 0n, 3n], { account: alice.account });
+          expect(await miniBuildingNFT.read.balanceOf([alice.account.address, 0n])).to.equal(0n);
           // Check donations
-          const { rankers } = await builderGrant.read.getSeason([1n]);
-          for (let i = 3; i < 203; i++) {
+          const { rankers } = await builderGrant.read.getSeason([0n]);
+          for (let i = 3; i < 13; i++) {
             expect(rankers[i].donationReceived[0]).to.be.true;
           }
         });
 
         it("should emit ClaimByTop3 event on claiming", async function () {
-          await expect(builderGrant.write.claimByTop3([1n, 0, 1], { account: alice.account }))
+          await expect(builderGrant.write.claimByTop3([0n, 0n, 2n], { account: alice.account }))
             .to.emit(builderGrant, "ClaimByTop3")
-            .withArgs(getAddress(alice.account.address), 1n, 0, 1, 200n, 0n);
+            .withArgs(getAddress(alice.account.address), 0n, 0n, 2n, 5n, 5n);
         });
 
         describe("After Claimed", function () {
           beforeEach(async function () {
-            await builderGrant.write.claimByTop3([1n, 0, 1], { account: alice.account }); // 200 mini buildings
-            await builderGrant.write.claimByTop3([1n, 1, 2], { account: bob.account }); // 50 mini buildings + 50 donations
-            await builderGrant.write.claimByTop3([1n, 2, 3], { account: carol.account }); // 40 donations
+            await builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account }); // 10 mini buildings
+            await builderGrant.write.claimByTop3([0n, 1n, 2n], { account: bob.account }); // 3 mini buildings + 3 donations
+            await builderGrant.write.claimByTop3([0n, 2n, 3n], { account: carol.account }); // 4 donations
           });
 
           it("should record claimedTypes correctly", async function () {
-            const { claimedTypes } = await builderGrant.read.getSeason([1n]);
-            expect(claimedTypes).to.deep.equal([1, 2, 3]);
+            const { grants } = await builderGrant.read.getSeason([0n]);
+            expect(grants[0].claimedType).to.equal(1);
+            expect(grants[1].claimedType).to.equal(2);
+            expect(grants[2].claimedType).to.equal(3);
           });
 
           it("should record the grantClaimed correctly", async function () {
-            const { grantClaimed } = await builderGrant.read.getSeason([1n]);
-            expect(grantClaimed).to.equal(290n);
+            const { rankers } = await builderGrant.read.getSeason([0n]);
+            expect(rankers[0].claimedAmount).to.equal(10n);
+            expect(rankers[1].claimedAmount).to.equal(3n);
+            expect(rankers[2].claimedAmount).to.equal(0n);
           });
 
           it("should have the correct balance of HUNT", async function () {
-            expect(await huntToken.read.balanceOf([builderGrant.address])).to.equal(parseEther("10000"));
+            expect(await huntToken.read.balanceOf([builderGrant.address])).to.equal(parseEther("700")); // 2000 - 13 * 100
           });
 
           it("should not touch winners data", async function () {
-            const { winners } = await builderGrant.read.getSeason([1n]);
-            expect(winners).to.deep.equal([
-              getAddress(alice.account.address),
-              getAddress(bob.account.address),
-              getAddress(carol.account.address)
-            ]);
+            const { rankers } = await builderGrant.read.getSeason([0n]);
+            expect(rankers[0].wallet).to.equal(getAddress(alice.account.address));
+            expect(rankers[1].wallet).to.equal(getAddress(bob.account.address));
+            expect(rankers[2].wallet).to.equal(getAddress(carol.account.address));
           });
-        });
+
+          // TODO: Claim Donations
+        }); // After Claimed
 
         describe("Claim - Edge cases", function () {
           it("should not be able to claim with invalid season id", async function () {
-            await expect(builderGrant.write.claimByTop3([0n, 0, 1], { account: alice.account })).to.be.rejectedWith(
-              "NotARanker"
+            await expect(builderGrant.write.claimByTop3([1n, 0n, 1n], { account: alice.account })).to.be.rejectedWith(
+              "Array accessed at an out-of-bounds or negative index"
             );
           });
 
           it("should not be able to claim with invalid claim type", async function () {
-            await expect(builderGrant.write.claimByTop3([1n, 0, 4], { account: alice.account })).to.be.rejectedWith(
+            await expect(builderGrant.write.claimByTop3([0n, 0n, 4n], { account: alice.account })).to.be.rejectedWith(
               "InvalidClaimType"
             );
           });
 
           it("should not be able to claim twice", async function () {
-            await builderGrant.write.claimByTop3([1n, 0, 1], { account: alice.account });
-            await expect(builderGrant.write.claimByTop3([1n, 0, 1], { account: alice.account })).to.be.rejectedWith(
+            await builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account });
+            await expect(builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account })).to.be.rejectedWith(
               "AlreadyClaimed"
             );
           });

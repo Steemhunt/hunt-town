@@ -85,7 +85,7 @@ contract BuilderGrant is Ownable {
     }
 
     function currentSeason() external view returns (uint256) {
-        return seasons.length - 1;
+        return seasons.length; // The last claimable season = length - 1
     }
 
     function deposit(uint256 huntAmount) external {
@@ -200,6 +200,7 @@ contract BuilderGrant is Ownable {
 
         // Send Mini Buildings reward
         if (amountForSelf > 0) {
+            season.rankers[ranking].claimedAmount += amountForSelf;
             season.totalClaimed += amountForSelf;
             if (!_mintBuildings(amountForSelf, msgSender)) revert MintBuildingsFailed();
         }
