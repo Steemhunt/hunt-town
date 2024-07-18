@@ -104,20 +104,13 @@ describe("BuilderGrant", function () {
         const fids = Array.from({ length: 10 }, (_, i) => {
           return BigInt(i + 10000);
         });
-        const accounts = Array.from({ length: 10 }, (_, i) => {
-          return `0x${(i + 1).toString().padStart(40, "0")}`;
-        });
 
+        this.accounts = (await hre.viem.getWalletClients()).slice(1, 14);
         this.SEASON_PARAMS = [
           0n,
           [10n, 6n, 4n],
           [8151n, 8152n, 8942n, ...fids],
-          [
-            getAddress(alice.account.address),
-            getAddress(bob.account.address),
-            getAddress(carol.account.address),
-            ...accounts
-          ]
+          [...this.accounts.map((account: any) => getAddress(account.account.address))] // alice, bob, carol, ... until rank 13
         ];
       });
 
@@ -259,18 +252,17 @@ describe("BuilderGrant", function () {
             .withArgs(getAddress(alice.account.address), 0n, 0n, 2n, 5n, 5n);
         });
 
-        describe("After Claimed", function () {
+        describe.only("After Claimed", function () {
           beforeEach(async function () {
             await builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account }); // 10 mini buildings
             await builderGrant.write.claimByTop3([0n, 1n, 2n], { account: bob.account }); // 3 mini buildings + 3 donations
-            await builderGrant.write.claimByTop3([0n, 2n, 3n], { account: carol.account }); // 4 donations
           });
 
           it("should record claimedTypes correctly", async function () {
             const { grants } = await builderGrant.read.getSeason([0n]);
-            expect(grants[0].claimedType).to.equal(1);
-            expect(grants[1].claimedType).to.equal(2);
-            expect(grants[2].claimedType).to.equal(3);
+            expect(grants[0].claimedType).to.equal(1n);
+            expect(grants[1].claimedType).to.equal(2n);
+            expect(grants[2].claimedType).to.equal(0n);
           });
 
           it("should record the grantClaimed correctly", async function () {
@@ -291,7 +283,102 @@ describe("BuilderGrant", function () {
             expect(rankers[2].wallet).to.equal(getAddress(carol.account.address));
           });
 
-          // TODO: Claim Donations
+          describe("Claim Donations by top 4 and below", function () {
+            beforeEach(async function () {
+              // alice: 0 donations
+              // bob: 3 donations - rank 4th - 6th
+              await builderGrant.write.claimByTop3([0n, 2n, 3n], { account: carol.account }); // carol: 4 donations - rank 4th - 7th
+              // should be immediately claimable once all top3 decided
+            });
+
+            it("should be set donation claimable", async function () {
+              expect(await builderGrant.read.isDonationClaimableNow([0n])).to.be.true;
+            });
+
+            it("rank 4th should have 2 donations available", async function () {
+              expect(await builderGrant.read.claimableDonationAmount([0n, 3n])).to.equal(2n);
+            });
+
+            it("should record where donations from correctly", async function () {
+              const { rankers } = await builderGrant.read.getSeason([0n]);
+              expect(rankers[3].donationReceived[0]).to.be.false;
+              expect(rankers[3].donationReceived[1]).to.be.true;
+              expect(rankers[3].donationReceived[2]).to.be.true;
+            });
+
+            // TODO: Claim test
+          }); // Claim donations by top 4 and below
+
+          describe.only("Claim donations - edge cases", function () {
+            // Status:
+            // - alice: 0 donations
+            // - bob: 3 donations - rank 4th - 6th
+            // carol: not decided yet
+
+            it("should not be able to claim donations until top3 have not decided yet", async function () {
+              expect(await builderGrant.read.isDonationClaimableNow([0n])).to.be.false;
+            });
+
+            it("should revert with DonationNotClaimableYet", async function () {
+              await expect(
+                builderGrant.read.claimableDonationAmount([0n, 3n], { account: alice.account })
+              ).to.be.rejectedWith("DonationNotClaimableYet");
+            });
+
+            describe("Top3 claim deadline passed", function () {
+              beforeEach(async function () {
+                await time.increase(86400 * 8); // 8 days passed
+              });
+
+              it("should be able to claim donations if top3 claim deadline passed", async function () {
+                expect(await builderGrant.read.isDonationClaimableNow([0n])).to.be.true;
+              });
+
+              it("should record where donations from correctly", async function () {
+                const { rankers } = await builderGrant.read.getSeason([0n]);
+                expect(rankers[3].donationReceived[0]).to.be.false;
+                expect(rankers[3].donationReceived[1]).to.be.true;
+                expect(rankers[3].donationReceived[2]).to.be.false;
+              });
+
+              it("should return claimable donation amount correctly", async function () {
+                expect(await builderGrant.read.claimableDonationAmount([0n, 2n])).to.equal(0n); // 3th (carol)
+                expect(await builderGrant.read.claimableDonationAmount([0n, 3n])).to.equal(1n); // 4th
+                expect(await builderGrant.read.claimableDonationAmount([0n, 4n])).to.equal(1n); // 5th
+                expect(await builderGrant.read.claimableDonationAmount([0n, 5n])).to.equal(1n); // 6th
+                expect(await builderGrant.read.claimableDonationAmount([0n, 6n])).to.equal(0n); // 7th
+              });
+
+              it("should be able to claim donations", async function () {
+                await builderGrant.write.claimDonation([0n, 3n], { account: this.accounts[3].account });
+                await builderGrant.write.claimDonation([0n, 4n], { account: this.accounts[4].account });
+                await builderGrant.write.claimDonation([0n, 5n], { account: this.accounts[5].account });
+                expect(await miniBuildingNFT.read.balanceOf([this.accounts[3].account.address, 0n])).to.equal(1n);
+                expect(await miniBuildingNFT.read.balanceOf([this.accounts[4].account.address, 0n])).to.equal(1n);
+                expect(await miniBuildingNFT.read.balanceOf([this.accounts[5].account.address, 0n])).to.equal(1n);
+              });
+
+              it("should not be able to claim donations if already claimed", async function () {
+                await builderGrant.write.claimDonation([0n, 3n], { account: this.accounts[3].account });
+                await expect(
+                  builderGrant.write.claimDonation([0n, 3n], { account: this.accounts[3].account })
+                ).to.be.rejectedWith("AlreadyClaimed");
+              });
+
+              it("should not be able to claim donations if the msg.sender is not the winner", async function () {
+                await expect(
+                  builderGrant.write.claimDonation([0n, 3n], { account: this.accounts[4].account })
+                ).to.be.rejectedWith("PermissionDenied");
+              });
+
+              it("should not be able to claim donations if the claim deadline has passed", async function () {
+                await time.increase(86400 * 21); // 21 more days passed -> 29 days passed
+                await expect(
+                  builderGrant.write.claimDonation([0n, 3n], { account: this.accounts[3].account })
+                ).to.be.rejectedWith("DonationClaimDeadlineReached");
+              });
+            }); // Top3 claim deadline passed
+          }); // Claim donations - edge cases
         }); // After Claimed
 
         describe("Claim - Edge cases", function () {

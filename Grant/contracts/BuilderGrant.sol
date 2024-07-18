@@ -221,7 +221,7 @@ contract BuilderGrant is Ownable {
         if (season.claimStartedAt + DONATION_CLAIM_DEADLINE < block.timestamp) revert DonationClaimDeadlineReached();
 
         // If the top 3 claim deadline is passed, return true
-        if (season.claimStartedAt + TOP3_CLAIM_DEADLINE > block.timestamp) return true;
+        if (season.claimStartedAt + TOP3_CLAIM_DEADLINE < block.timestamp) return true;
 
         // Even if the top 3 claim deadline is NOT passed, if all top 3 have already been decided, return true
         if (season.grants[0].claimedType > 0 && season.grants[1].claimedType > 0 && season.grants[2].claimedType > 0)
