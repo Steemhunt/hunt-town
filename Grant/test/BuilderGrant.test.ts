@@ -73,6 +73,11 @@ describe("BuilderGrant", function () {
       expect(await huntToken.read.balanceOf([builderGrant.address])).to.equal(DEPOSIT_AMOUNT);
     });
 
+    it("should handle withdrawal when balance is zero", async function () {
+      await builderGrant.write.emergencyWithdraw();
+      await expect(builderGrant.write.emergencyWithdraw()).to.be.rejectedWith("NothingToWithdraw");
+    });
+
     it("should be able to emergency withdraw by owner", async function () {
       const originalBalance = await huntToken.read.balanceOf([owner.account.address]);
       await builderGrant.write.emergencyWithdraw();
@@ -118,6 +123,18 @@ describe("BuilderGrant", function () {
         await expect(builderGrant.write.setSeasonData(this.SEASON_PARAMS))
           .to.emit(builderGrant, "SetSeasonData")
           .withArgs(0n, 13n, this.SEASON_PARAMS[1]);
+      });
+
+      it("should not set season data with empty rankers list", async function () {
+        await expect(builderGrant.write.setSeasonData([0n, [10n, 6n, 4n], [], []])).to.be.rejectedWith(
+          "InvalidRankersParams"
+        );
+      });
+
+      it("should not set season data with mismatched fids and wallets", async function () {
+        await expect(
+          builderGrant.write.setSeasonData([0n, [10n, 6n, 4n], [8151n, 8152n], [getAddress(alice.account.address)]])
+        ).to.be.rejectedWith("InvalidRankersParams");
       });
 
       describe("Normal Flow", function () {
@@ -252,7 +269,32 @@ describe("BuilderGrant", function () {
             .withArgs(getAddress(alice.account.address), 0n, 0n, 2n, 5n, 5n);
         });
 
-        describe.only("After Claimed", function () {
+        it("should not claim with rank not in top 3", async function () {
+          await expect(builderGrant.write.claimByTop3([0n, 3n, 1n], { account: alice.account })).to.be.rejectedWith(
+            "InvalidRankingParam"
+          );
+        });
+
+        it("should not be able to claim with invalid season id", async function () {
+          await expect(builderGrant.write.claimByTop3([1n, 0n, 1n], { account: alice.account })).to.be.rejectedWith(
+            "InvalidSeasonId"
+          );
+        });
+
+        it("should not be able to claim with invalid claim type", async function () {
+          await expect(builderGrant.write.claimByTop3([0n, 0n, 4n], { account: alice.account })).to.be.rejectedWith(
+            "InvalidClaimType"
+          );
+        });
+
+        it("should not be able to claim twice", async function () {
+          await builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account });
+          await expect(builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account })).to.be.rejectedWith(
+            "AlreadyClaimed"
+          );
+        });
+
+        describe("After Claimed", function () {
           beforeEach(async function () {
             await builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account }); // 10 mini buildings
             await builderGrant.write.claimByTop3([0n, 1n, 2n], { account: bob.account }); // 3 mini buildings + 3 donations
@@ -306,10 +348,31 @@ describe("BuilderGrant", function () {
               expect(rankers[3].donationReceived[2]).to.be.true;
             });
 
-            // TODO: Claim test
+            it("should be able to claim donations", async function () {
+              await builderGrant.write.claimDonation([0n, 3n], { account: this.accounts[3].account });
+              await builderGrant.write.claimDonation([0n, 4n], { account: this.accounts[4].account });
+              await builderGrant.write.claimDonation([0n, 5n], { account: this.accounts[5].account });
+              await builderGrant.write.claimDonation([0n, 6n], { account: this.accounts[6].account });
+              expect(await miniBuildingNFT.read.balanceOf([this.accounts[3].account.address, 0n])).to.equal(2n); // 4th
+              expect(await miniBuildingNFT.read.balanceOf([this.accounts[4].account.address, 0n])).to.equal(2n); // 5th
+              expect(await miniBuildingNFT.read.balanceOf([this.accounts[5].account.address, 0n])).to.equal(2n); // 6th
+              expect(await miniBuildingNFT.read.balanceOf([this.accounts[6].account.address, 0n])).to.equal(1n); // 7th
+            });
+
+            it("should not claim donations with invalid season id", async function () {
+              await expect(builderGrant.write.claimDonation([1n, 3n], { account: alice.account })).to.be.rejectedWith(
+                "InvalidSeasonId"
+              );
+            });
+
+            it("should not claim donations with invalid rank", async function () {
+              await expect(builderGrant.write.claimDonation([0n, 20n], { account: alice.account })).to.be.rejectedWith(
+                "InvalidRankingParam"
+              );
+            });
           }); // Claim donations by top 4 and below
 
-          describe.only("Claim donations - edge cases", function () {
+          describe("Claim donations - edge cases", function () {
             // Status:
             // - alice: 0 donations
             // - bob: 3 donations - rank 4th - 6th
@@ -380,27 +443,6 @@ describe("BuilderGrant", function () {
             }); // Top3 claim deadline passed
           }); // Claim donations - edge cases
         }); // After Claimed
-
-        describe("Claim - Edge cases", function () {
-          it("should not be able to claim with invalid season id", async function () {
-            await expect(builderGrant.write.claimByTop3([1n, 0n, 1n], { account: alice.account })).to.be.rejectedWith(
-              "Array accessed at an out-of-bounds or negative index"
-            );
-          });
-
-          it("should not be able to claim with invalid claim type", async function () {
-            await expect(builderGrant.write.claimByTop3([0n, 0n, 4n], { account: alice.account })).to.be.rejectedWith(
-              "InvalidClaimType"
-            );
-          });
-
-          it("should not be able to claim twice", async function () {
-            await builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account });
-            await expect(builderGrant.write.claimByTop3([0n, 0n, 1n], { account: alice.account })).to.be.rejectedWith(
-              "AlreadyClaimed"
-            );
-          });
-        }); // Claim - Edge cases
       }); // Claim
     }); // Set Season Data
   }); // Deposit and withdraw

@@ -18,6 +18,7 @@ contract BuilderGrant is Ownable {
     error InvalidSeasonId();
     error InvalidRankersParams();
     error InvalidGrantAmount();
+    error NothingToWithdraw();
     error ClaimDeadlineReached();
     error DonationClaimDeadlineReached();
     error DonationNotClaimableYet();
@@ -98,6 +99,7 @@ contract BuilderGrant is Ownable {
     function emergencyWithdraw() external onlyOwner {
         address msgSender = _msgSender();
         uint256 balance = HUNT.balanceOf(address(this));
+        if (balance == 0) revert NothingToWithdraw();
         if (!HUNT.transfer(msgSender, balance)) revert TokenTransferFailed();
 
         emit EmergencyWithdraw(msgSender, balance);
@@ -110,6 +112,7 @@ contract BuilderGrant is Ownable {
         address[] calldata wallets
     ) external onlyOwner {
         // Validate params
+        if (fids.length == 0) revert InvalidRankersParams();
         if (fids.length != wallets.length) revert InvalidRankersParams();
 
         // Check if we have enough HUNT to mint all Mini Building NFTs
@@ -158,6 +161,7 @@ contract BuilderGrant is Ownable {
     function getClaimableAmountByTop3(uint256 seasonId, uint256 ranking) public view returns (uint16) {
         // Only the top 3 rankers (index: 0, 1, 2) can claim
         if (ranking > 2) revert InvalidRankingParam();
+        if (seasonId >= seasons.length) revert InvalidSeasonId();
 
         // Check claim deadline
         Season storage season = seasons[seasonId];
@@ -215,6 +219,8 @@ contract BuilderGrant is Ownable {
     }
 
     function isDonationClaimableNow(uint256 seasonId) public view returns (bool) {
+        if (seasonId >= seasons.length) revert InvalidSeasonId();
+
         Season storage season = seasons[seasonId];
 
         // If the donation claim deadline is passed, return false
@@ -231,10 +237,11 @@ contract BuilderGrant is Ownable {
     }
 
     function claimableDonationAmount(uint256 seasonId, uint256 ranking) public view returns (uint16 claimableAmount) {
-        Season storage season = seasons[seasonId];
-
-        if (season.rankers[ranking].claimedAmount > 0) revert DonationAlreadyClaimed();
         if (!isDonationClaimableNow(seasonId)) revert DonationNotClaimableYet();
+
+        Season storage season = seasons[seasonId];
+        if (season.rankers.length <= ranking) revert InvalidRankingParam();
+        if (season.rankers[ranking].claimedAmount > 0) revert DonationAlreadyClaimed();
 
         bool[3] storage donationReceived = season.rankers[ranking].donationReceived;
 
