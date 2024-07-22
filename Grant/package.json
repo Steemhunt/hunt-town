@@ -10,7 +10,7 @@
   "license": "BSD-3-Clause",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^3.0.0",
-    "hardhat": "^2.22.5",
+    "hardhat": "^2.22.6",
     "hardhat-chai-matchers-viem": "^2.0.8"
   },
   "dependencies": {
