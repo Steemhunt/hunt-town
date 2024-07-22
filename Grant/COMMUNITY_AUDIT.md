@@ -6,7 +6,7 @@ Join us in this community effort!
 
 ## How? 👀
 
-1. **Review the Code:** Check out [this PR](https://github.com/Steemhunt/hunt-town/pull/7) and give the code a thorough review.
+1. **Review the Code:** Check out [this PR](https://github.com/Steemhunt/hunt-town/pull/8) and give the code a thorough review.
 2. **Submit Your Findings:** If you spot any issues or have suggestions, add comments or submit a review through the GitHub interface.
 
 All contributions submitted by **July 25, 2024** will be counted.

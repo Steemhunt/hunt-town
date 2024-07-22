@@ -28,7 +28,6 @@ interface IMCV2_Bond {
  */
 
 contract BuilderGrant is Ownable {
-    // TODO: Trim unused
     error InvalidSeasonId();
     error InvalidRankersParams();
     error InvalidGrantAmount();
