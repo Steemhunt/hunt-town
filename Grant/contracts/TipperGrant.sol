@@ -10,10 +10,9 @@ contract TipperGrant is Ownable {
     using Strings for uint256;
 
     error InvalidSeasonId();
-    error SeasonDataAlreadyExists();
+    error SeasonDataCannotBeUpdated();
     error TokenTransferFailed();
     error NotEnoughGrantBalance();
-    error NothingToClaim();
     error AlreadyClaimed();
     error InvalidMerkleProof();
 
@@ -30,8 +29,7 @@ contract TipperGrant is Ownable {
         bytes32 merkleRoot;
         mapping(address => uint112) claimedAmount; // Track claimed amount per address
     }
-    mapping(uint256 => Season) private seasons;
-    uint256 public lastSeason; // currentSeason = lastSeason + 1;
+    Season[] private seasons;
 
     event Deposit(address indexed user, uint256 huntAmount);
     event SetGrantData(uint256 indexed season, uint24 walletCount, bytes32 merkleRoot);
@@ -39,7 +37,7 @@ contract TipperGrant is Ownable {
     event EmergencyWithdraw(address indexed user, uint256 huntAmount);
 
     function currentSeason() external view returns (uint256) {
-        return lastSeason + 1;
+        return seasons.length;
     }
 
     function deposit(uint256 huntAmount) external {
@@ -57,18 +55,28 @@ contract TipperGrant is Ownable {
         emit EmergencyWithdraw(msgSender, balance);
     }
 
+    modifier validSeasonId(uint256 seasonId) {
+        if (seasonId >= seasons.length) revert InvalidSeasonId();
+        _;
+    }
+
     function setGrantData(
         uint256 seasonId,
         uint24 walletCount,
         uint112 totalGrant,
         bytes32 _merkleRoot
     ) external onlyOwner {
-        Season storage season = seasons[seasonId];
-
-        if (season.walletCount != 0) revert SeasonDataAlreadyExists();
-        if (seasonId < 1 || lastSeason != seasonId - 1) revert InvalidSeasonId();
-
-        lastSeason = seasonId; // current season becomes the last season
+        Season storage season;
+        if (seasonId == seasons.length) {
+            seasons.push();
+            season = seasons[seasonId];
+        } else if (seasonId < seasons.length) {
+            // overwrites existing season data, unless anyone has already claimed
+            season = seasons[seasonId];
+            if (season.totalGrantClaimed > 0) revert SeasonDataCannotBeUpdated();
+        } else {
+            revert InvalidSeasonId();
+        }
 
         season.walletCount = walletCount;
         season.totalGrant = totalGrant;
@@ -79,7 +87,7 @@ contract TipperGrant is Ownable {
         emit SetGrantData(seasonId, walletCount, _merkleRoot);
     }
 
-    function claim(uint256 seasonId, uint112 amount, bytes32[] calldata merkleProof) external {
+    function claim(uint256 seasonId, uint112 amount, bytes32[] calldata merkleProof) external validSeasonId(seasonId) {
         Season storage season = seasons[seasonId];
         address msgSender = _msgSender();
 
@@ -98,7 +106,7 @@ contract TipperGrant is Ownable {
         address wallet,
         uint112 amount,
         bytes32[] calldata merkleProof
-    ) public view returns (bool) {
+    ) public view validSeasonId(seasonId) returns (bool) {
         Season storage season = seasons[seasonId];
 
         return _verify(season.merkleRoot, wallet, amount, merkleProof);
@@ -118,13 +126,13 @@ contract TipperGrant is Ownable {
     // MARK: - Utility view functions
     function getSeasonStats(
         uint256 seasonId
-    ) public view returns (uint24 walletCount, uint112 totalGrantClaimed, uint112 totalGrant) {
+    ) public view validSeasonId(seasonId) returns (uint24 walletCount, uint112 totalGrantClaimed, uint112 totalGrant) {
         Season storage season = seasons[seasonId];
 
         return (season.walletCount, season.totalGrantClaimed, season.totalGrant);
     }
 
-    function getClaimedAmount(uint256 seasonId, address wallet) public view returns (uint112) {
+    function getClaimedAmount(uint256 seasonId, address wallet) public view validSeasonId(seasonId) returns (uint112) {
         return seasons[seasonId].claimedAmount[wallet];
     }
 }
