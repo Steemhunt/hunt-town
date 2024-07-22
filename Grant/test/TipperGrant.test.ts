@@ -2,7 +2,7 @@ import { loadFixture, impersonateAccount } from "@nomicfoundation/hardhat-toolbo
 import { expect } from "chai";
 import hre, { ignition } from "hardhat";
 import { getAddress, parseEther, getContract } from "viem";
-import { HUNT_ADDRESS } from "./utils";
+import { HUNT_BASE_ADDRESS } from "./utils";
 import { abi as ERC20_ABI } from "@openzeppelin/contracts/build/contracts/ERC20.json";
 import TipperGrantModule from "../ignition/modules/TipperGrant";
 import { MerkleTree } from "merkletreejs";
@@ -19,9 +19,20 @@ function bufferToHex(x: Buffer) {
 }
 
 async function setupMerkleTree(wallets: string[], amounts: bigint[]) {
-  const leaves = wallets.map((wallet, index) => keccak256(wallet + amounts[index].toString()));
+  const leaves = wallets.map((wallet, index) =>
+    // Take out '0x' prefix from address to match `abi.encodePacked` behavior
+    keccak256(Buffer.concat([Buffer.from(wallet.slice(2), "hex"), Buffer.from(amounts[index].toString())]))
+  );
   const merkleTree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+
   return { merkleTree, merkleRoot: merkleTree.getRoot() };
+}
+
+function getProof(tree: MerkleTree, address: string, amount: bigint) {
+  // Take out '0x' prefix from address to match `abi.encodePacked` behavior
+  const leaf = keccak256(Buffer.concat([Buffer.from(address.slice(2), "hex"), Buffer.from(amount.toString())]));
+
+  return tree.getProof(leaf).map((x) => bufferToHex(x.data));
 }
 
 describe("TipperGrant", function () {
@@ -30,7 +41,7 @@ describe("TipperGrant", function () {
     const { tipperGrant } = await ignition.deploy(TipperGrantModule, {
       parameters: {
         TipperGrant: {
-          huntToken: HUNT_ADDRESS
+          huntToken: HUNT_BASE_ADDRESS
         }
       }
     });
@@ -38,7 +49,7 @@ describe("TipperGrant", function () {
     const impersonatedAddress = "0xCB3f3e0E992435390e686D7b638FCb8baBa6c5c7";
     await impersonateAccount(impersonatedAddress);
     const huntToken = getContract({
-      address: HUNT_ADDRESS,
+      address: HUNT_BASE_ADDRESS,
       abi: ERC20_ABI,
       client: owner
     });
@@ -66,7 +77,7 @@ describe("TipperGrant", function () {
     });
 
     it("should set the HUNT token address correctly", async function () {
-      expect(await tipperGrant.read.HUNT()).to.equal(HUNT_ADDRESS);
+      expect(await tipperGrant.read.HUNT()).to.equal(HUNT_BASE_ADDRESS);
     });
   });
 
@@ -110,10 +121,15 @@ describe("TipperGrant", function () {
 
   describe("Grant Data and Claim", function () {
     const SEASON_ID = 1;
-    const FIDS = [8151n, 8152n, 8942n];
     let WALLETS: string[];
     const GRANT_AMOUNTS = [parseEther("10000"), parseEther("4000"), parseEther("2000")];
     const DEPOSIT_AMOUNT = GRANT_AMOUNTS.reduce((a, b) => a + b, 0n);
+    async function setGrantData() {
+      const { merkleTree, merkleRoot } = await setupMerkleTree(WALLETS, GRANT_AMOUNTS);
+      await tipperGrant.write.setGrantData([SEASON_ID, GRANT_AMOUNTS.length, DEPOSIT_AMOUNT, bufferToHex(merkleRoot)]);
+
+      return { merkleTree, merkleRoot };
+    }
 
     beforeEach(async function () {
       WALLETS = [getAddress(alice.account.address), getAddress(bob.account.address), getAddress(carol.account.address)];
@@ -121,24 +137,21 @@ describe("TipperGrant", function () {
     });
 
     describe("Set Grant Data", function () {
-      async function setGrantData() {
-        const { merkleRoot } = await setupMerkleTree(WALLETS, GRANT_AMOUNTS);
-        await tipperGrant.write.setGrantData([SEASON_ID, FIDS.length, DEPOSIT_AMOUNT, bufferToHex(merkleRoot)]);
-      }
-
       it("should set grant data correctly", async function () {
         await setGrantData();
         const [walletCount, totalGrantClaimed, totalGrant] = await tipperGrant.read.getSeasonStats([SEASON_ID]);
-        expect(walletCount).to.equal(FIDS.length);
+        expect(walletCount).to.equal(GRANT_AMOUNTS.length);
         expect(totalGrantClaimed).to.equal(0);
         expect(totalGrant).to.equal(DEPOSIT_AMOUNT);
       });
 
       it("should emit SetGrantData event on setting grant data", async function () {
         const { merkleRoot } = await setupMerkleTree(WALLETS, GRANT_AMOUNTS);
-        await expect(tipperGrant.write.setGrantData([SEASON_ID, FIDS.length, DEPOSIT_AMOUNT, bufferToHex(merkleRoot)]))
+        await expect(
+          tipperGrant.write.setGrantData([SEASON_ID, GRANT_AMOUNTS.length, DEPOSIT_AMOUNT, bufferToHex(merkleRoot)])
+        )
           .to.emit(tipperGrant, "SetGrantData")
-          .withArgs(SEASON_ID, FIDS.length, bufferToHex(merkleRoot));
+          .withArgs(SEASON_ID, GRANT_AMOUNTS.length, bufferToHex(merkleRoot));
       });
 
       it("should not allow setting grant data for the same season twice", async function () {
@@ -149,7 +162,7 @@ describe("TipperGrant", function () {
       it("should not allow setting grant data with invalid season id", async function () {
         const { merkleRoot } = await setupMerkleTree(WALLETS, GRANT_AMOUNTS);
         await expect(
-          tipperGrant.write.setGrantData([0, FIDS.length, DEPOSIT_AMOUNT, bufferToHex(merkleRoot)])
+          tipperGrant.write.setGrantData([0, GRANT_AMOUNTS.length, DEPOSIT_AMOUNT, bufferToHex(merkleRoot)])
         ).to.be.rejectedWith("InvalidSeasonId");
       });
 
@@ -159,71 +172,68 @@ describe("TipperGrant", function () {
           GRANT_AMOUNTS.map((amount) => amount * 10n)
         );
         await expect(
-          tipperGrant.write.setGrantData([SEASON_ID, FIDS.length, DEPOSIT_AMOUNT * 10n, bufferToHex(merkleRoot)])
+          tipperGrant.write.setGrantData([
+            SEASON_ID,
+            GRANT_AMOUNTS.length,
+            DEPOSIT_AMOUNT * 10n,
+            bufferToHex(merkleRoot)
+          ])
         ).to.be.rejectedWith("NotEnoughGrantBalance");
       });
-    });
 
-    describe("Claim", function () {
-      const CLAIM_GRANT_AMOUNTS = [parseEther("20000"), parseEther("10000"), parseEther("4000")];
-      const CLAIM_DEPOSIT_AMOUNT = CLAIM_GRANT_AMOUNTS.reduce((a, b) => a + b, 0n);
+      describe("Claim", function () {
+        beforeEach(async function () {
+          const { merkleTree } = await setGrantData();
+          this.merkleTree = merkleTree;
+        });
 
-      beforeEach(async function () {
-        await approveAndDeposit(CLAIM_DEPOSIT_AMOUNT);
-        const { merkleRoot } = await setupMerkleTree(WALLETS, CLAIM_GRANT_AMOUNTS);
-        await tipperGrant.write.setGrantData([SEASON_ID, FIDS.length, CLAIM_DEPOSIT_AMOUNT, bufferToHex(merkleRoot)]);
-      });
+        it.only("should allow claiming grant", async function () {
+          const proof = getProof(this.merkleTree, getAddress(alice.account.address), GRANT_AMOUNTS[0]);
+          await tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], proof], { account: alice.account });
+          const claimedAmount = await tipperGrant.read.getClaimedAmount([SEASON_ID, alice.account.address]);
+          const aliceBalance = await huntToken.read.balanceOf([alice.account.address]);
 
-      it.only("should allow claiming grant", async function () {
-        const leaf = keccak256(alice.account.address + CLAIM_GRANT_AMOUNTS[0].toString());
-        const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
-        const proof = merkleTree.getHexProof(leaf);
+          expect(claimedAmount).to.equal(GRANT_AMOUNTS[0]);
+          expect(aliceBalance).to.equal(GRANT_AMOUNTS[0]);
+        });
 
-        console.log("---------", proof);
+        it("should emit Claim event on claiming", async function () {
+          const leaf = keccak256(alice.account.address + GRANT_AMOUNTS[0].toString());
+          const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
+          const proof = merkleTree.getHexProof(leaf);
 
-        await tipperGrant.write.claim([SEASON_ID, CLAIM_GRANT_AMOUNTS[0], proof], { account: alice.account });
+          await expect(tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], proof], { account: alice.account }))
+            .to.emit(tipperGrant, "Claim")
+            .withArgs(getAddress(alice.account.address), SEASON_ID, GRANT_AMOUNTS[0]);
+        });
 
-        const claimedAmount = await tipperGrant.read.getClaimedAmount([SEASON_ID, alice.account.address]);
-        expect(claimedAmount).to.equal(CLAIM_GRANT_AMOUNTS[0]);
-      });
+        it("should not allow claiming twice", async function () {
+          const leaf = keccak256(alice.account.address + GRANT_AMOUNTS[0].toString());
+          const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
+          const proof = merkleTree.getHexProof(leaf);
 
-      it("should emit Claim event on claiming", async function () {
-        const leaf = keccak256(alice.account.address + CLAIM_GRANT_AMOUNTS[0].toString());
-        const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
-        const proof = merkleTree.getHexProof(leaf);
+          await tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], proof], { account: alice.account });
+          await expect(
+            tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], proof], { account: alice.account })
+          ).to.be.rejectedWith("AlreadyClaimed");
+        });
 
-        await expect(tipperGrant.write.claim([SEASON_ID, CLAIM_GRANT_AMOUNTS[0], proof], { account: alice.account }))
-          .to.emit(tipperGrant, "Claim")
-          .withArgs(getAddress(alice.account.address), SEASON_ID, CLAIM_GRANT_AMOUNTS[0]);
-      });
+        it("should not allow claiming if not a winner", async function () {
+          const leaf = keccak256(owner.account.address + GRANT_AMOUNTS[0].toString());
+          const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
+          const proof = merkleTree.getHexProof(leaf);
 
-      it("should not allow claiming twice", async function () {
-        const leaf = keccak256(alice.account.address + CLAIM_GRANT_AMOUNTS[0].toString());
-        const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
-        const proof = merkleTree.getHexProof(leaf);
-
-        await tipperGrant.write.claim([SEASON_ID, CLAIM_GRANT_AMOUNTS[0], proof], { account: alice.account });
-        await expect(
-          tipperGrant.write.claim([SEASON_ID, CLAIM_GRANT_AMOUNTS[0], proof], { account: alice.account })
-        ).to.be.rejectedWith("AlreadyClaimed");
-      });
-
-      it("should not allow claiming if not a winner", async function () {
-        const leaf = keccak256(owner.account.address + CLAIM_GRANT_AMOUNTS[0].toString());
-        const merkleTree = new MerkleTree([leaf], keccak256, { sortPairs: true });
-        const proof = merkleTree.getHexProof(leaf);
-
-        await expect(
-          tipperGrant.write.claim([SEASON_ID, CLAIM_GRANT_AMOUNTS[0], proof], { account: owner.account })
-        ).to.be.rejectedWith("InvalidMerkleProof");
-      });
-    });
+          await expect(
+            tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], proof], { account: owner.account })
+          ).to.be.rejectedWith("InvalidMerkleProof");
+        });
+      }); // Claim
+    }); // Set Grant Data
   });
 
   describe("Test the limit of grant data", function () {
     const SEASON_ID = 1;
     const WALLET_COUNT = 100;
-    const FIDS = Array.from({ length: WALLET_COUNT }, (_, i) => BigInt(i));
     const WALLETS = Array.from({ length: WALLET_COUNT }, (_, i) => getAddress(`0x${i.toString(16).padStart(40, "0")}`));
     const GRANT_AMOUNTS = Array.from({ length: WALLET_COUNT }, () => parseEther("1"));
     const DEPOSIT_AMOUNT = GRANT_AMOUNTS.reduce((a, b) => a + b, 0n);
@@ -234,7 +244,7 @@ describe("TipperGrant", function () {
 
     it("should set grant data correctly", async function () {
       const { merkleRoot } = await setupMerkleTree(WALLETS, GRANT_AMOUNTS);
-      await tipperGrant.write.setGrantData([SEASON_ID, FIDS, WALLETS, GRANT_AMOUNTS, bufferToHex(merkleRoot)]);
+      await tipperGrant.write.setGrantData([SEASON_ID, WALLET_COUNT, DEPOSIT_AMOUNT, bufferToHex(merkleRoot)]);
     });
   });
 });

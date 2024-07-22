@@ -18,7 +18,6 @@ contract TipperGrant is Ownable {
     error InvalidMerkleProof();
 
     IERC20 public immutable HUNT;
-    bytes32 public merkleRoot;
 
     constructor(address huntAddress) Ownable(msg.sender) {
         HUNT = IERC20(huntAddress);
@@ -28,6 +27,7 @@ contract TipperGrant is Ownable {
         uint24 walletCount;
         uint112 totalGrantClaimed;
         uint112 totalGrant;
+        bytes32 merkleRoot;
         mapping(address => uint112) claimedAmount; // Track claimed amount per address
     }
     mapping(uint256 => Season) private seasons;
@@ -35,7 +35,7 @@ contract TipperGrant is Ownable {
 
     event Deposit(address indexed user, uint256 huntAmount);
     event SetGrantData(uint256 indexed season, uint24 walletCount, bytes32 merkleRoot);
-    event Claim(address indexed user, uint256 indexed season, uint256 huntAmount);
+    event Claim(address indexed user, uint256 indexed season, uint112 huntAmount);
     event EmergencyWithdraw(address indexed user, uint256 huntAmount);
 
     function currentSeason() external view returns (uint256) {
@@ -72,29 +72,46 @@ contract TipperGrant is Ownable {
 
         season.walletCount = walletCount;
         season.totalGrant = totalGrant;
-        merkleRoot = _merkleRoot;
+        season.merkleRoot = _merkleRoot;
 
         if (totalGrant > HUNT.balanceOf(address(this))) revert NotEnoughGrantBalance();
 
         emit SetGrantData(seasonId, walletCount, _merkleRoot);
     }
 
-    function claim(uint256 seasonId, uint256 maxAmount, bytes32[] calldata merkleProof) external {
+    function claim(uint256 seasonId, uint112 amount, bytes32[] calldata merkleProof) external {
         Season storage season = seasons[seasonId];
         address msgSender = _msgSender();
 
         if (season.claimedAmount[msgSender] > 0) revert AlreadyClaimed();
-        if (!_verify(merkleProof, msgSender, maxAmount)) revert InvalidMerkleProof();
+        if (!_verify(season.merkleRoot, msgSender, amount, merkleProof)) revert InvalidMerkleProof();
 
-        season.claimedAmount[msgSender] = uint112(maxAmount);
-        season.totalGrantClaimed += uint112(maxAmount);
-        if (!HUNT.transfer(msgSender, maxAmount)) revert TokenTransferFailed();
+        season.claimedAmount[msgSender] = amount;
+        season.totalGrantClaimed += amount;
+        if (!HUNT.transfer(msgSender, amount)) revert TokenTransferFailed();
 
-        emit Claim(msgSender, seasonId, maxAmount);
+        emit Claim(msgSender, seasonId, amount);
     }
 
-    function _verify(bytes32[] calldata merkleProof, address sender, uint256 maxAmount) private view returns (bool) {
-        bytes32 leaf = keccak256(abi.encodePacked(sender, maxAmount.toString()));
+    function isWhitelisted(
+        uint256 seasonId,
+        address wallet,
+        uint112 amount,
+        bytes32[] calldata merkleProof
+    ) public view returns (bool) {
+        Season storage season = seasons[seasonId];
+
+        return _verify(season.merkleRoot, wallet, amount, merkleProof);
+    }
+
+    function _verify(
+        bytes32 merkleRoot,
+        address sender,
+        uint112 amount,
+        bytes32[] calldata merkleProof
+    ) private pure returns (bool) {
+        bytes32 leaf = keccak256(abi.encodePacked(sender, uint256(amount).toString()));
+
         return MerkleProof.verify(merkleProof, merkleRoot, leaf);
     }
 
