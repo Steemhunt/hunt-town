@@ -6,6 +6,15 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
+/**
+ * @title TipperGrant
+ * @author sebayaki (@if)
+ * @notice This contract is used to distribute grants to Voters (Tip Givers)
+ * @dev
+ * - All voters (tipping participants) can claim some liquid HUNT based on their total tipping amount.
+ * - The reward wallet and amount will be validated via MerkleProof, with only the Merkle root stored on the contract due to the potentially large number of tippers.
+ */
+
 contract TipperGrant is Ownable {
     using Strings for uint256;
 

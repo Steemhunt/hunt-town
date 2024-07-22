@@ -13,6 +13,20 @@ interface IMCV2_Bond {
     ) external returns (uint256);
 }
 
+/**
+ * @title BuilderGrant
+ * @author sebayaki (@if)
+ * @notice This contract is used to distribute grants to Builders (Tip Receivers)
+ * @dev
+ * - The top 3 builders will claim bounties of X, Y, Z HUNT each, in the form of Mini Building NFTs (each backed by 100 HUNT tokens).
+ * - The top 3 builders have 3 options to choose from:
+ *   - Option 1: Claim 100% for themselves.
+ *   - Option 2: Claim 50% for themselves and donate 50% to those ranked 4th and below.
+ *   - Option 3: Donate 100% to those ranked 4th and below.
+ * - All data is stored on the contract, so `setSeasonData` requires the owners to add at least up to the (X / 100 + 3)rd rank to cover all donations.
+ * - Donation receivers will be able to claim their rewards once the top 3 finish their decisions or after 1 week has passed.
+ */
+
 contract BuilderGrant is Ownable {
     // TODO: Trim unused
     error InvalidSeasonId();
