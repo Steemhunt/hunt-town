@@ -8,6 +8,10 @@ An experimental grant DAO project in the form of tipping, utilizing the Farcaste
 npx hardhat test
 ```
 
+## Community Audit
+
+[COMMUNITY_AUDIT.md](./COMMUNITY_AUDIT.md)
+
 ## Deploy
 
 The test version is deployed on the Base mainnet, with the following test token and Mini Building NFT:
