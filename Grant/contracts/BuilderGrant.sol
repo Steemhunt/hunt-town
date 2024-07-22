@@ -82,7 +82,7 @@ contract BuilderGrant is Ownable {
         MINI_BUILDING_ADDRESS = miniBuilding; // base: 0x475f8E3eE5457f7B4AAca7E989D35418657AdF2a
 
         // gas saving - approve infinite HUNT to Bond for minting
-        HUNT.approve(bond, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+        HUNT.approve(bond, type(uint256).max);
     }
 
     function currentSeason() external view returns (uint256) {
@@ -112,8 +112,7 @@ contract BuilderGrant is Ownable {
         address[] calldata wallets
     ) external onlyOwner {
         // Validate params
-        if (fids.length == 0) revert InvalidRankersParams();
-        if (fids.length != wallets.length) revert InvalidRankersParams();
+        if (fids.length == 0 || fids.length != wallets.length) revert InvalidRankersParams();
 
         // Check if we have enough HUNT to mint all Mini Building NFTs
         if (
@@ -122,7 +121,7 @@ contract BuilderGrant is Ownable {
         ) revert NotEnoughGrantBalance();
 
         // Check if there are enough ranker data is provided if the 1st ranker donates 100%
-        // e.g. If the top grant is 10,000 HUNT, include up to 103 rankers to allow donations to ranks 4-203
+        // e.g. If the top grant is 10,000 HUNT, include up to 103 rankers to allow donations to ranks 4-103
         if (grantsAmount[0] > (fids.length - 3)) revert InvalidGrantAmount();
 
         // Check if the grants amount is even because they have 50% donation option
@@ -209,6 +208,7 @@ contract BuilderGrant is Ownable {
             if (!_mintBuildings(amountForSelf, msgSender)) revert MintBuildingsFailed();
         }
 
+        // Set donations
         if (amountForDonation > 0) {
             for (uint256 i = 3; i < amountForDonation + 3; ++i) {
                 season.rankers[i].donationReceived[ranking] = true;
