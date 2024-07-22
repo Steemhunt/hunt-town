@@ -12,14 +12,15 @@ All contributions submitted by **July 25, 2024** will be counted.
 
 ## Bounty Details 💰
 
-We have 1000 [Mini Building NFTs](https://mint.club/nft/base/MINIBD) (worth ~$3,100 in total) to distribute proportionally based on your contributions.
+We have 100 [Mini Building NFTs](https://mint.club/nft/base/MINIBD) (worth ~$3,100 in total) to distribute proportionally based on your contributions.
+
 On July 26, I’ll create a GitHub issue ([similar to this](https://github.com/Steemhunt/mint.club-v2-contract/issues/72)) to announce the bounty distribution. Leave your wallet address (Base) in the comments on that issue.
 
 ## Basic Code Structure
 
 ### [BuilderGrant](./contracts/BuilderGrant.sol): Grant for Builders (Tip receivers)
 
-- The top 3 builders will claim bounties of 10K, 6K, and 4K HUNT each, in the form of Mini Building NFTs (100 HUNT locked on each NFT).
+- The top 3 builders will claim bounties of 10K, 6K, and 4K HUNT each, in the form of Mini Building NFTs (each backed by 100 HUNT tokens).
 - The top 3 builders have 3 options to choose from:
   - Option 1: Claim 100% for themselves.
   - Option 2: Claim 50% for themselves and donate 50% to those ranked 4th and below.
