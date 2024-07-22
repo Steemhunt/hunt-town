@@ -185,6 +185,20 @@ describe("TipperGrant", function () {
         ).to.be.rejectedWith("NotEnoughGrantBalance");
       });
 
+      it("should not allow setting grant data with zero deposit amount", async function () {
+        const { merkleRoot } = await setupMerkleTree(WALLETS, GRANT_AMOUNTS);
+        await expect(
+          tipperGrant.write.setGrantData([SEASON_ID, GRANT_AMOUNTS.length, 0n, bufferToHex(merkleRoot)])
+        ).to.be.rejectedWith("InvalidDepositAmount");
+      });
+
+      it("should not allow setting grant data with zero wallet count", async function () {
+        const { merkleRoot } = await setupMerkleTree(WALLETS, GRANT_AMOUNTS);
+        await expect(
+          tipperGrant.write.setGrantData([SEASON_ID, 0, DEPOSIT_AMOUNT, bufferToHex(merkleRoot)])
+        ).to.be.rejectedWith("InvalidWalletCount");
+      });
+
       describe("Claim", function () {
         beforeEach(async function () {
           const { merkleTree } = await setGrantData();
@@ -222,18 +236,6 @@ describe("TipperGrant", function () {
           ).to.be.rejectedWith("AlreadyClaimed");
         });
 
-        it("should not allow claiming with a wrong proof", async function () {
-          await expect(
-            tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], []], { account: owner.account })
-          ).to.be.rejectedWith("InvalidMerkleProof");
-        });
-
-        it("should not allow claiming with a wrong amount", async function () {
-          await expect(
-            tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0] + 1n, this.merkleProof], { account: owner.account })
-          ).to.be.rejectedWith("InvalidMerkleProof");
-        });
-
         it("should not allow claiming with a wrong season id", async function () {
           await expect(
             tipperGrant.write.claim([SEASON_ID + 1, GRANT_AMOUNTS[0], this.merkleProof], { account: owner.account })
@@ -243,6 +245,25 @@ describe("TipperGrant", function () {
         it("should not allow claimming by a different wallet", async function () {
           await expect(
             tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], this.merkleProof], { account: bob.account })
+          ).to.be.rejectedWith("InvalidMerkleProof");
+        });
+
+        it("should not allow claiming with an empty Merkle proof", async function () {
+          await expect(
+            tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], []], { account: alice.account })
+          ).to.be.rejectedWith("InvalidMerkleProof");
+        });
+
+        it("should not allow claiming with a valid proof but incorrect amount", async function () {
+          await expect(
+            tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0] + 1n, this.merkleProof], { account: alice.account })
+          ).to.be.rejectedWith("InvalidMerkleProof");
+        });
+
+        it("should not allow claiming with a valid proof but incorrect wallet address", async function () {
+          const incorrectProof = getProof(this.merkleTree, bob.account.address, GRANT_AMOUNTS[0]);
+          await expect(
+            tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], incorrectProof], { account: alice.account })
           ).to.be.rejectedWith("InvalidMerkleProof");
         });
       }); // Claim

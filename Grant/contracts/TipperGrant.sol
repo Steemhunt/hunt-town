@@ -15,6 +15,8 @@ contract TipperGrant is Ownable {
     error NotEnoughGrantBalance();
     error AlreadyClaimed();
     error InvalidMerkleProof();
+    error InvalidDepositAmount();
+    error InvalidWalletCount();
 
     IERC20 public immutable HUNT;
 
@@ -77,12 +79,13 @@ contract TipperGrant is Ownable {
         } else {
             revert InvalidSeasonId();
         }
+        if (totalGrant == 0) revert InvalidDepositAmount();
+        if (walletCount == 0) revert InvalidWalletCount();
+        if (totalGrant > HUNT.balanceOf(address(this))) revert NotEnoughGrantBalance();
 
         season.walletCount = walletCount;
         season.totalGrant = totalGrant;
         season.merkleRoot = _merkleRoot;
-
-        if (totalGrant > HUNT.balanceOf(address(this))) revert NotEnoughGrantBalance();
 
         emit SetGrantData(seasonId, walletCount, _merkleRoot);
     }
