@@ -18,6 +18,11 @@ const config: HardhatUserConfig = {
         url: `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`,
         blockNumber: 17162466
       }
+    },
+    base: {
+      url: `https://base.llamarpc.com`,
+      chainId: 8453,
+      accounts: [process.env.TEST_PRIVATE_KEY!]
     }
   },
   gasReporter: {
@@ -26,6 +31,12 @@ const config: HardhatUserConfig = {
     currency: "USD",
     gasPrice: 15,
     coinmarketcap: undefined
+  },
+  etherscan: {
+    // network list: npx hardhat verify --list-networks
+    apiKey: {
+      base: process.env.BASESCAN_API_KEY!
+    }
   }
 };
 
