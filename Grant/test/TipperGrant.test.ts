@@ -138,6 +138,15 @@ describe("TipperGrant", function () {
     });
 
     describe("Set Grant Data", function () {
+      it("should not be able to set by non-owner", async function () {
+        const { merkleRoot } = await setupMerkleTree(WALLETS, GRANT_AMOUNTS);
+        await expect(
+          tipperGrant.write.setGrantData([SEASON_ID, GRANT_AMOUNTS.length, DEPOSIT_AMOUNT, bufferToHex(merkleRoot)], {
+            account: alice.account
+          })
+        ).to.be.rejectedWith("OwnableUnauthorizedAccount");
+      });
+
       it("should set grant data correctly", async function () {
         await setGrantData();
         const [walletCount, totalGrantClaimed, totalGrant] = await tipperGrant.read.getSeasonStats([SEASON_ID]);
