@@ -1,6 +1,7 @@
 # HUNT Grant - Community Contract Audit
 
 HUNT Grant Season 1 is wrapping up, and we’ve set up a community audit for the grant distribution contracts.
+
 Join us in this community effort!
 
 ## How? 👀
