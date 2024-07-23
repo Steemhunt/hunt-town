@@ -1,8 +1,7 @@
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
-import { HUNT_BASE_ADDRESS } from "../../test/utils";
 
 const TipperGrantModule = buildModule("TipperGrant", (m) => {
-  const huntBase = m.getParameter("huntBase", HUNT_BASE_ADDRESS);
+  const huntBase = m.getParameter("huntBase", "");
 
   const tipperGrant = m.contract("TipperGrant", [huntBase]);
 
