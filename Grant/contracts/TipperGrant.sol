@@ -36,10 +36,11 @@ contract TipperGrant is Ownable {
     }
 
     struct Season {
-        uint24 walletCount;
-        uint112 totalGrantClaimed;
-        uint112 totalGrant;
         uint40 claimStartedAt;
+        uint24 walletCount;
+        uint24 claimedCount;
+        uint112 totalGrantAmount;
+        uint112 claimedGrantAmount;
         bytes32 merkleRoot;
         mapping(address => uint112) claimedAmount; // Track claimed amount per address
     }
@@ -87,7 +88,7 @@ contract TipperGrant is Ownable {
         } else if (seasonId < seasons.length) {
             // overwrites existing season data, unless anyone has already claimed
             season = seasons[seasonId];
-            if (season.totalGrantClaimed > 0) revert SeasonDataCannotBeUpdated();
+            if (season.claimedGrantAmount > 0) revert SeasonDataCannotBeUpdated();
         } else {
             revert InvalidSeasonId();
         }
@@ -96,7 +97,7 @@ contract TipperGrant is Ownable {
         if (totalGrant > HUNT.balanceOf(address(this))) revert NotEnoughGrantBalance();
 
         season.walletCount = walletCount;
-        season.totalGrant = totalGrant;
+        season.totalGrantAmount = totalGrant;
         season.merkleRoot = _merkleRoot;
         season.claimStartedAt = uint40(block.timestamp);
 
@@ -112,7 +113,8 @@ contract TipperGrant is Ownable {
         if (!_verify(season.merkleRoot, msgSender, amount, merkleProof)) revert InvalidMerkleProof();
 
         season.claimedAmount[msgSender] = amount;
-        season.totalGrantClaimed += amount;
+        season.claimedCount += 1;
+        season.claimedGrantAmount += amount;
         if (!HUNT.transfer(msgSender, amount)) revert TokenTransferFailed();
 
         emit Claim(msgSender, seasonId, amount);
@@ -147,11 +149,23 @@ contract TipperGrant is Ownable {
         public
         view
         validSeasonId(seasonId)
-        returns (uint24 walletCount, uint112 totalGrantClaimed, uint112 totalGrant, uint40 claimStartedAt)
+        returns (
+            uint24 walletCount,
+            uint24 claimedCount,
+            uint112 totalGrant,
+            uint112 claimedGrant,
+            uint40 claimStartedAt
+        )
     {
         Season storage season = seasons[seasonId];
 
-        return (season.walletCount, season.totalGrantClaimed, season.totalGrant, season.claimStartedAt);
+        return (
+            season.walletCount,
+            season.claimedCount,
+            season.totalGrantAmount,
+            season.claimedGrantAmount,
+            season.claimStartedAt
+        );
     }
 
     function getClaimedAmount(uint256 seasonId, address wallet) public view validSeasonId(seasonId) returns (uint112) {

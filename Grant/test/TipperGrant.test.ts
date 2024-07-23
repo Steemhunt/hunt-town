@@ -149,10 +149,13 @@ describe("TipperGrant", function () {
 
       it("should set grant data correctly", async function () {
         await setGrantData();
-        const [walletCount, totalGrantClaimed, totalGrant] = await tipperGrant.read.getSeasonStats([SEASON_ID]);
+        const [walletCount, claimedCount, totalGrant, claimedGrantAmount] = await tipperGrant.read.getSeasonStats([
+          SEASON_ID
+        ]);
         expect(walletCount).to.equal(GRANT_AMOUNTS.length);
-        expect(totalGrantClaimed).to.equal(0);
+        expect(claimedCount).to.equal(0);
         expect(totalGrant).to.equal(DEPOSIT_AMOUNT);
+        expect(claimedGrantAmount).to.equal(0);
       });
 
       it("should emit SetGrantData event on setting grant data", async function () {
@@ -228,6 +231,12 @@ describe("TipperGrant", function () {
 
           expect(claimedAmount).to.equal(GRANT_AMOUNTS[0]);
           expect(aliceBalance).to.equal(GRANT_AMOUNTS[0]);
+        });
+
+        it("should increase claimedCount", async function () {
+          await tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], this.merkleProof], { account: alice.account });
+          const [, claimedCount, ,] = await tipperGrant.read.getSeasonStats([SEASON_ID]);
+          expect(claimedCount).to.equal(1);
         });
 
         it("should emit Claim event on claiming", async function () {
