@@ -41,7 +41,7 @@ describe("TipperGrant", function () {
     const { tipperGrant } = await ignition.deploy(TipperGrantModule, {
       parameters: {
         TipperGrant: {
-          huntToken: HUNT_BASE_ADDRESS
+          huntBase: HUNT_BASE_ADDRESS
         }
       }
     });
