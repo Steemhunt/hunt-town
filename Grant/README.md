@@ -22,9 +22,13 @@ The test version is deployed on the Base mainnet, with the following test token 
 ```sh
 npx hardhat ignition deploy ignition/modules/BuilderGrant.ts --network base --parameters ignition/test-params.json --verify
 npx hardhat ignition deploy ignition/modules/TipperGrant.ts --network base --parameters ignition/test-params.json --verify
+
+# reset
+npx hardhat ignition deploy ignition/modules/BuilderGrant.ts --network base --reset
+npx hardhat ignition deploy ignition/modules/TipperGrant.ts --network base --reset
 ```
 
 ## Test Contracts
 
-- BuilderGrant: https://basescan.org/address/0x6d1f4ecd17ddA7fb39C56Da566b66d63f06671d9#code
-- TipperGrant: https://basescan.org//address/0x50d73a2e3Da38F6598368512A751F4AF8f4a6b54#code
+- BuilderGrant: https://basescan.org//address/0x07cF0c1D379BD67C5Bd34bF3B554adac0233AC2d#code
+- TipperGrant: https://basescan.org/address/0xda6e0a343802c22D28379A04B65E20dA69e35A4C#code
