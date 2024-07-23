@@ -161,6 +161,17 @@ describe("BuilderGrant", function () {
             }))
           );
         });
+
+        it("should return rankers count properly", async function () {
+          const rankers = await builderGrant.read.getRankersCount([0n]);
+          expect(rankers).to.equal(13n);
+        });
+
+        it("should return ranker at index properly", async function () {
+          const ranker = await builderGrant.read.getRankerAt([0n, 4n]);
+          expect(ranker.fid).to.equal(10001n);
+          expect(ranker.wallet).to.equal(getAddress(this.accounts[4].account.address));
+        });
       }); // Normal Flow
 
       describe("Set Season Data - Edge cases", function () {

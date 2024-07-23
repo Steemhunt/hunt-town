@@ -98,6 +98,11 @@ contract BuilderGrant is Ownable {
         HUNT.approve(bond, type(uint256).max);
     }
 
+    modifier validSeasonId(uint256 seasonId) {
+        if (seasonId >= seasons.length) revert InvalidSeasonId();
+        _;
+    }
+
     function currentSeason() external view returns (uint256) {
         return seasons.length; // The last claimable season = length - 1
     }
@@ -170,10 +175,12 @@ contract BuilderGrant is Ownable {
         emit SetSeasonData(seasonId, fids.length, grantsAmount);
     }
 
-    function getClaimableAmountByTop3(uint256 seasonId, uint256 ranking) public view returns (uint16) {
+    function getClaimableAmountByTop3(
+        uint256 seasonId,
+        uint256 ranking
+    ) public view validSeasonId(seasonId) returns (uint16) {
         // Only the top 3 rankers (index: 0, 1, 2) can claim
         if (ranking > 2) revert InvalidRankingParam();
-        if (seasonId >= seasons.length) revert InvalidSeasonId();
 
         // Check claim deadline
         Season storage season = seasons[seasonId];
@@ -185,7 +192,7 @@ contract BuilderGrant is Ownable {
         return season.grants[ranking].amount;
     }
 
-    function claimByTop3(uint256 seasonId, uint256 ranking, uint8 claimType) external {
+    function claimByTop3(uint256 seasonId, uint256 ranking, uint8 claimType) external validSeasonId(seasonId) {
         // Basic validations are done here
         uint16 claimableAmount = getClaimableAmountByTop3(seasonId, ranking);
 
@@ -231,9 +238,7 @@ contract BuilderGrant is Ownable {
         emit ClaimByTop3(msgSender, seasonId, ranking, claimType, amountForSelf, amountForDonation);
     }
 
-    function isDonationClaimableNow(uint256 seasonId) public view returns (bool) {
-        if (seasonId >= seasons.length) revert InvalidSeasonId();
-
+    function isDonationClaimableNow(uint256 seasonId) public view validSeasonId(seasonId) returns (bool) {
         Season storage season = seasons[seasonId];
 
         // If the donation claim deadline is passed, return false
@@ -249,7 +254,10 @@ contract BuilderGrant is Ownable {
         return false;
     }
 
-    function claimableDonationAmount(uint256 seasonId, uint256 ranking) public view returns (uint16 claimableAmount) {
+    function claimableDonationAmount(
+        uint256 seasonId,
+        uint256 ranking
+    ) public view validSeasonId(seasonId) returns (uint16 claimableAmount) {
         if (!isDonationClaimableNow(seasonId)) revert DonationNotClaimableYet();
 
         Season storage season = seasons[seasonId];
@@ -265,7 +273,7 @@ contract BuilderGrant is Ownable {
         }
     }
 
-    function claimDonation(uint256 seasonId, uint256 ranking) external {
+    function claimDonation(uint256 seasonId, uint256 ranking) external validSeasonId(seasonId) {
         uint16 claimableAmount = claimableDonationAmount(seasonId, ranking);
         if (claimableAmount == 0) revert NoDonationToClaim();
 
@@ -288,11 +296,14 @@ contract BuilderGrant is Ownable {
 
     // MARK: - Utility view functions
 
-    function getSeason(uint256 seasonId) external view returns (Season memory) {
+    function getSeason(uint256 seasonId) external view validSeasonId(seasonId) returns (Season memory) {
         return seasons[seasonId];
     }
 
-    function getRankingByWallet(uint256 seasonId, address wallet) external view returns (uint256) {
+    function getRankingByWallet(
+        uint256 seasonId,
+        address wallet
+    ) external view validSeasonId(seasonId) returns (uint256) {
         Ranker[] storage rankers = seasons[seasonId].rankers;
         for (uint256 i = 0; i < rankers.length; ++i) {
             if (rankers[i].wallet == wallet) return i;
@@ -301,12 +312,23 @@ contract BuilderGrant is Ownable {
         revert NotARanker();
     }
 
-    function getRankingByFid(uint256 seasonId, uint48 fid) external view returns (uint256) {
+    function getRankingByFid(uint256 seasonId, uint48 fid) external view validSeasonId(seasonId) returns (uint256) {
         Ranker[] storage rankers = seasons[seasonId].rankers;
         for (uint256 i = 0; i < rankers.length; ++i) {
             if (rankers[i].fid == fid) return i;
         }
 
         revert NotARanker();
+    }
+
+    function getRankersCount(uint256 seasonId) external view validSeasonId(seasonId) returns (uint256) {
+        return seasons[seasonId].rankers.length;
+    }
+
+    function getRankerAt(
+        uint256 seasonId,
+        uint256 index
+    ) external view validSeasonId(seasonId) returns (Ranker memory) {
+        return seasons[seasonId].rankers[index];
     }
 }
