@@ -26,8 +26,10 @@ contract TipperGrant is Ownable {
     error InvalidMerkleProof();
     error InvalidDepositAmount();
     error InvalidWalletCount();
+    error ClaimDeadlineReached();
 
     IERC20 public immutable HUNT;
+    uint256 public constant CLAIM_DEADLINE = 4 weeks;
 
     constructor(address huntAddress) Ownable(msg.sender) {
         HUNT = IERC20(huntAddress);
@@ -37,6 +39,7 @@ contract TipperGrant is Ownable {
         uint24 walletCount;
         uint112 totalGrantClaimed;
         uint112 totalGrant;
+        uint40 claimStartedAt;
         bytes32 merkleRoot;
         mapping(address => uint112) claimedAmount; // Track claimed amount per address
     }
@@ -95,6 +98,7 @@ contract TipperGrant is Ownable {
         season.walletCount = walletCount;
         season.totalGrant = totalGrant;
         season.merkleRoot = _merkleRoot;
+        season.claimStartedAt = uint40(block.timestamp);
 
         emit SetGrantData(seasonId, walletCount, _merkleRoot);
     }
@@ -103,6 +107,7 @@ contract TipperGrant is Ownable {
         Season storage season = seasons[seasonId];
         address msgSender = _msgSender();
 
+        if (block.timestamp > season.claimStartedAt + CLAIM_DEADLINE) revert ClaimDeadlineReached();
         if (season.claimedAmount[msgSender] > 0) revert AlreadyClaimed();
         if (!_verify(season.merkleRoot, msgSender, amount, merkleProof)) revert InvalidMerkleProof();
 
@@ -138,10 +143,15 @@ contract TipperGrant is Ownable {
     // MARK: - Utility view functions
     function getSeasonStats(
         uint256 seasonId
-    ) public view validSeasonId(seasonId) returns (uint24 walletCount, uint112 totalGrantClaimed, uint112 totalGrant) {
+    )
+        public
+        view
+        validSeasonId(seasonId)
+        returns (uint24 walletCount, uint112 totalGrantClaimed, uint112 totalGrant, uint40 claimStartedAt)
+    {
         Season storage season = seasons[seasonId];
 
-        return (season.walletCount, season.totalGrantClaimed, season.totalGrant);
+        return (season.walletCount, season.totalGrantClaimed, season.totalGrant, season.claimStartedAt);
     }
 
     function getClaimedAmount(uint256 seasonId, address wallet) public view validSeasonId(seasonId) returns (uint112) {

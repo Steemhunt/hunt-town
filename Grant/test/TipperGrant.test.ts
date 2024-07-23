@@ -1,4 +1,4 @@
-import { loadFixture, impersonateAccount } from "@nomicfoundation/hardhat-toolbox-viem/network-helpers";
+import { loadFixture, impersonateAccount, time } from "@nomicfoundation/hardhat-toolbox-viem/network-helpers";
 import { expect } from "chai";
 import hre, { ignition } from "hardhat";
 import { getAddress, parseEther, getContract } from "viem";
@@ -274,6 +274,14 @@ describe("TipperGrant", function () {
           await expect(
             tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], incorrectProof], { account: alice.account })
           ).to.be.rejectedWith("InvalidMerkleProof");
+        });
+
+        it("should not allow claiming after the deadline", async function () {
+          await time.increase(86400 * 4 * 7 + 1);
+
+          await expect(
+            tipperGrant.write.claim([SEASON_ID, GRANT_AMOUNTS[0], this.merkleProof], { account: alice.account })
+          ).to.be.rejectedWith("ClaimDeadlineReached");
         });
       }); // Claim
     }); // Set Grant Data
