@@ -166,10 +166,14 @@ contract BuilderGrant is Ownable {
         season.grants[2].amount = grantsAmount[2];
         season.claimStartedAt = uint40(block.timestamp);
 
-        // Set rankers data
-        delete season.rankers; // reset ranker data if exists
-        for (uint256 i = 0; i < fids.length; ++i) {
-            season.rankers.push(Ranker(fids[i], wallets[i], 0, [false, false, false]));
+        // Reset ranker data if exists, and overwrites the old data
+        if (season.rankers.length > 0) {
+            delete season.rankers;
+        }
+        unchecked {
+            for (uint256 i = 0; i < fids.length; ++i) {
+                season.rankers.push(Ranker(fids[i], wallets[i], 0, [false, false, false]));
+            }
         }
 
         emit SetSeasonData(seasonId, fids.length, grantsAmount);
@@ -230,8 +234,10 @@ contract BuilderGrant is Ownable {
 
         // Set donations
         if (amountForDonation > 0) {
-            for (uint256 i = 3; i < amountForDonation + 3; ++i) {
-                season.rankers[i].donationReceived[ranking] = true;
+            unchecked {
+                for (uint256 i = 3; i < amountForDonation + 3; ++i) {
+                    season.rankers[i].donationReceived[ranking] = true;
+                }
             }
         }
 
@@ -266,9 +272,11 @@ contract BuilderGrant is Ownable {
 
         bool[3] storage donationReceived = season.rankers[ranking].donationReceived;
 
-        for (uint256 i = 0; i < 3; ++i) {
-            if (donationReceived[i] == true) {
-                ++claimableAmount;
+        unchecked {
+            for (uint256 i = 0; i < 3; ++i) {
+                if (donationReceived[i] == true) {
+                    ++claimableAmount;
+                }
             }
         }
     }
@@ -305,8 +313,11 @@ contract BuilderGrant is Ownable {
         address wallet
     ) external view validSeasonId(seasonId) returns (uint256) {
         Ranker[] storage rankers = seasons[seasonId].rankers;
-        for (uint256 i = 0; i < rankers.length; ++i) {
-            if (rankers[i].wallet == wallet) return i;
+
+        unchecked {
+            for (uint256 i = 0; i < rankers.length; ++i) {
+                if (rankers[i].wallet == wallet) return i;
+            }
         }
 
         revert NotARanker();
@@ -314,8 +325,11 @@ contract BuilderGrant is Ownable {
 
     function getRankingByFid(uint256 seasonId, uint48 fid) external view validSeasonId(seasonId) returns (uint256) {
         Ranker[] storage rankers = seasons[seasonId].rankers;
-        for (uint256 i = 0; i < rankers.length; ++i) {
-            if (rankers[i].fid == fid) return i;
+
+        unchecked {
+            for (uint256 i = 0; i < rankers.length; ++i) {
+                if (rankers[i].fid == fid) return i;
+            }
         }
 
         revert NotARanker();
