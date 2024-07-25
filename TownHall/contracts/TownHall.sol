@@ -11,8 +11,8 @@ contract TownHall {
 
     using SafeERC20 for IERC20;
 
-    Building public building;
-    IERC20 public huntToken;
+    Building public immutable building;
+    IERC20 public immutable huntToken;
 
     uint256 public constant LOCK_UP_AMOUNT = 1e21; // 1,000 HUNT per NFT minting
     uint256 public constant LOCK_UP_DURATION = 31536000; // 365 days in seconds
