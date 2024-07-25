@@ -8,18 +8,15 @@ async function main() {
   const latestBlock = await hre.ethers.provider.getBlock('latest');
   const nonce = await hre.ethers.provider.getTransactionCount(deployer, 'latest');
   console.log(`Latest Block: ${latestBlock.number} / Nonce: ${nonce}`);
-
-  let huntAddress = '0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5';
-  if (hre.network.name === 'goerli' || hre.network.name === 'polygonmain') {
-    // const HuntTokenMock = await hre.ethers.getContractFactory('HuntTokenMock');
-    // const token = await HuntTokenMock.deploy();
-    // await token.deployed();
-
-    // huntAddress = token.address;
-    // console.log(` -> Test HUNT token contract deployed at ${huntAddress}`);
-
-    huntAddress = '0x4bF67e5C9baD43DD89dbe8fCAD3c213C868fe881'; // Use an existing one
-  }
+  
+  const networkConfig = {
+    goerli: '0x4bF67e5C9baD43DD89dbe8fCAD3c213C868fe881',
+    polygonmain: '0x4bF67e5C9baD43DD89dbe8fCAD3c213C868fe881',
+    default: '0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5'
+  };
+  
+  let huntAddress = networkConfig[hre.network.name] || networkConfig.default;
+  
 
   console.log(`HUNT token address: ${huntAddress}`);
 
