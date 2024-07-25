@@ -297,9 +297,11 @@ contract BuilderGrant is Ownable {
     }
 
     function _mintBuildings(uint256 count, address to) private returns (bool) {
-        BOND.mint(MINI_BUILDING_ADDRESS, count, HUNT_PER_MINI_BUILDING * count, to);
-
-        return true;
+        try BOND.mint(MINI_BUILDING_ADDRESS, count, HUNT_PER_MINI_BUILDING * count, to) {
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     // MARK: - Utility view functions
