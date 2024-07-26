@@ -237,6 +237,7 @@ contract BuilderGrant is Ownable {
         }
 
         // Set donations
+        // We want to track where the donations are received from, so we're setting them in a separate array with a matching index for rankers 1st to 3rd.
         if (amountForDonation > 0) {
             unchecked {
                 for (uint256 i = 3; i < amountForDonation + 3; ++i) {
