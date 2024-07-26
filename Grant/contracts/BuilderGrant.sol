@@ -138,6 +138,9 @@ contract BuilderGrant is Ownable {
             HUNT_PER_MINI_BUILDING * (grantsAmount[0] + grantsAmount[1] + grantsAmount[2])
         ) revert NotEnoughGrantBalance();
 
+        // Make sure the grants amount is in descending order because [0] represents the top 1st ranker
+        if (grantsAmount[0] < grantsAmount[1] || grantsAmount[1] < grantsAmount[2]) revert InvalidGrantAmount();
+
         // Check if there are enough ranker data is provided if the 1st ranker donates 100%
         // e.g. If the top grant is 10,000 HUNT, include up to 103 rankers to allow donations to ranks 4-103
         if (grantsAmount[0] > (fids.length - 3)) revert InvalidGrantAmount();

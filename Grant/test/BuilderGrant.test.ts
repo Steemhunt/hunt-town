@@ -220,6 +220,18 @@ describe("BuilderGrant", function () {
           ).to.be.rejectedWith("InvalidGrantAmount");
         });
 
+        it("should always have the first grant amount greater than the second", async function () {
+          await expect(
+            builderGrant.write.setSeasonData([0n, [5n, 6n, 4n], this.SEASON_PARAMS[2], this.SEASON_PARAMS[3]])
+          ).to.be.rejectedWith("InvalidGrantAmount");
+        });
+
+        it("should always have the second grant amount greater than the third", async function () {
+          await expect(
+            builderGrant.write.setSeasonData([0n, [4n, 3n, 4n], this.SEASON_PARAMS[2], this.SEASON_PARAMS[3]])
+          ).to.be.rejectedWith("InvalidGrantAmount");
+        });
+
         it("can NOT overwrite the datat if anyone has claimed", async function () {
           await builderGrant.write.setSeasonData(this.SEASON_PARAMS);
 
