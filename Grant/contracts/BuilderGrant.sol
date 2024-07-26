@@ -174,8 +174,9 @@ contract BuilderGrant is Ownable {
             delete season.rankers;
         }
         unchecked {
+            bool[3] memory defaults = [false, false, false]; // gas saving
             for (uint256 i = 0; i < fids.length; ++i) {
-                season.rankers.push(Ranker(fids[i], wallets[i], 0, [false, false, false]));
+                season.rankers.push(Ranker(fids[i], wallets[i], 0, defaults));
             }
         }
 
