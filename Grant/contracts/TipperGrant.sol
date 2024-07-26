@@ -110,7 +110,8 @@ contract TipperGrant is Ownable {
 
         if (block.timestamp > season.claimStartedAt + CLAIM_DEADLINE) revert ClaimDeadlineReached();
         if (season.claimedAmount[msgSender] > 0) revert AlreadyClaimed();
-        if (!_verify(season.merkleRoot, msgSender, amount, merkleProof)) revert InvalidMerkleProof();
+        if (merkleProof.length == 0 || !_verify(season.merkleRoot, msgSender, amount, merkleProof))
+            revert InvalidMerkleProof();
 
         season.claimedAmount[msgSender] = amount;
         season.claimedCount += 1;
