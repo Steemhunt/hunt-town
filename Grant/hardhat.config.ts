@@ -22,7 +22,7 @@ const config: HardhatUserConfig = {
     base: {
       url: `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`,
       chainId: 8453,
-      accounts: [process.env.TEST_PRIVATE_KEY!]
+      accounts: [process.env.PKEY!]
     }
   },
   gasReporter: {
