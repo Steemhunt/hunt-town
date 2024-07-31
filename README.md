@@ -4,5 +4,5 @@ Hunt Town is a web3 builders' guild where builders come together to contribute t
 
 ## Contracts
 
-/TownHall Building NFT minting contracts
-/Grant HUNT Grant reward distribution contracts
+- [/TownHall](./TownHall) - Building NFT minting contracts
+- [/Grant](./Grant) - HUNT Grant reward distribution contracts
