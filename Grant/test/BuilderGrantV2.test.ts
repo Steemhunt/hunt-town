@@ -1,6 +1,6 @@
 import { loadFixture, impersonateAccount, time } from "@nomicfoundation/hardhat-toolbox-viem/network-helpers";
 import { expect } from "chai";
-import hre, { ignition } from "hardhat";
+import hre, { ignition, network } from "hardhat";
 import BuilderGrantV2Module from "../ignition/modules/BuilderGrantV2";
 import { getAddress, parseEther, getContract } from "viem";
 import { MCV2_BOND_ADDRESS, HUNT_BASE_ADDRESS, MINI_BUILDING_ADDRESS } from "./utils";
@@ -22,6 +22,21 @@ describe("BuilderGrantV2", function () {
   let alice: any;
   let bob: any;
   let carol: any;
+
+  before(async () => {
+    // Hard reset (with forking) before all tests to prevent bleeding over from previous BuilderGrantV1 tests
+    await network.provider.request({
+      method: "hardhat_reset",
+      params: [
+        {
+          forking: {
+            jsonRpcUrl: `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`,
+            blockNumber: 17162466
+          }
+        }
+      ]
+    });
+  });
 
   async function deployFixtures() {
     // Grab signers
