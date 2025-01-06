@@ -27,21 +27,20 @@ contract BuilderGrantV2 is Ownable {
     // ----------------------------------------
     error InvalidSeasonId();
     error InvalidRankersParams();
-    error InvalidGrantAmount();
-    error NothingToWithdraw();
     error SeasonDataIsNotUpdateable();
     error NotEnoughGrantBalance();
     error TokenTransferFailed();
-    error PermissionDenied();
     error NotARanker();
+    error NothingToClaim();
     error AlreadyClaimed();
-
+    error ClaimDeadlineReached();
     // ----------------------------------------
     //          CONSTANTS & IMMUTABLES
     // ----------------------------------------
 
     /// @notice 100 HUNT per 1 Mini Building NFT
     uint256 public constant HUNT_PER_MINI_BUILDING = 100 ether;
+    uint256 public constant CLAIM_DEADLINE = 4 weeks;
 
     /// @notice The ERC20 token (e.g. HUNT) used to back each Mini Building NFT
     IERC20 public immutable HUNT;
@@ -76,7 +75,8 @@ contract BuilderGrantV2 is Ownable {
      * @param rankers        List of ranker data
      */
     struct Season {
-        uint16 totalClaimed;
+        uint40 claimStartedAt; // INFO: Unix timestamp, max supported up to year 36,812
+        uint16 totalClaimed; // total claimed mini building count for the season
         Ranker[] rankers;
     }
 
@@ -145,7 +145,6 @@ contract BuilderGrantV2 is Ownable {
     function emergencyWithdraw() external onlyOwner {
         address msgSender = _msgSender();
         uint256 balance = HUNT.balanceOf(address(this));
-        if (balance == 0) revert NothingToWithdraw();
         if (!HUNT.transfer(msgSender, balance)) revert TokenTransferFailed();
 
         emit EmergencyWithdraw(msgSender, balance);
@@ -178,45 +177,41 @@ contract BuilderGrantV2 is Ownable {
         if (len == 0 || len != wallets.length || len != rewardAmounts.length) {
             revert InvalidRankersParams();
         }
-        // Optional: Limit max rankers to 93 (top 3 x 31 days)
+        // Optional: Limit max ranker count to 93 (top 3 x 31 days)
         if (len > 93) revert InvalidRankersParams();
 
         // Check if we have enough HUNT to mint all needed Mini Building NFTs
         uint256 totalNeeded;
         for (uint256 i = 0; i < len; ++i) {
+            if (rewardAmounts[i] == 0) revert InvalidRankersParams();
+
             totalNeeded += rewardAmounts[i];
         }
 
-        // The maximum number of Mini Building rewards is 6 (1st: 3, 2nd: 2, 3rd: 1) x 31 days = 186
-        if (totalNeeded > 186) revert InvalidRankersParams();
+        // Validate seasonId
+        if (seasonId > seasons.length) revert InvalidSeasonId();
 
-        if (seasonId < seasons.length && seasons[seasonId].totalClaimed > 0) revert SeasonDataIsNotUpdateable();
+        if (seasonId == seasons.length) {
+            // Create new season
+            seasons.push();
+        } else {
+            // Update existing season
+            if (seasons[seasonId].totalClaimed > 0) revert SeasonDataIsNotUpdateable();
+            delete seasons[seasonId].rankers;
+        }
 
         if (HUNT.balanceOf(address(this)) < (totalNeeded * HUNT_PER_MINI_BUILDING)) {
             revert NotEnoughGrantBalance();
         }
 
-        // If we are updating an existing season
-        if (seasonId < seasons.length) {
-            Season storage seasonToUpdate = seasons[seasonId];
-            // Overwrite rankers
-            delete seasonToUpdate.rankers;
-            for (uint256 i = 0; i < len; i++) {
-                seasonToUpdate.rankers.push(
-                    Ranker({fid: fids[i], wallet: wallets[i], totalReward: rewardAmounts[i], isClaimed: false})
-                );
-            }
-        } else if (seasonId == seasons.length) {
-            // Create new season
-            Season storage newSeason = seasons.push();
-            for (uint256 i = 0; i < len; i++) {
-                newSeason.rankers.push(
-                    Ranker({fid: fids[i], wallet: wallets[i], totalReward: rewardAmounts[i], isClaimed: false})
-                );
-            }
-        } else {
-            // seasonId too high
-            revert InvalidSeasonId();
+        // Get or create season
+        Season storage season = seasons[seasonId];
+
+        // Add new rankers
+        for (uint256 i = 0; i < len; i++) {
+            season.rankers.push(
+                Ranker({fid: fids[i], wallet: wallets[i], totalReward: rewardAmounts[i], isClaimed: false})
+            );
         }
 
         emit SetSeasonData(seasonId, len);
@@ -235,12 +230,14 @@ contract BuilderGrantV2 is Ownable {
         uint256 ranking = getRankingByWallet(seasonId, msgSender);
 
         Season storage season = seasons[seasonId];
+
+        // Check if the claim deadline is passed
+        if (season.claimStartedAt + CLAIM_DEADLINE < block.timestamp) revert ClaimDeadlineReached();
+
         Ranker storage ranker = season.rankers[ranking];
 
-        // If already claimed, revert
-        if (ranker.isClaimed) {
-            revert AlreadyClaimed();
-        }
+        if (ranker.totalReward == 0) revert NothingToClaim();
+        if (ranker.isClaimed) revert AlreadyClaimed();
 
         // Mark as claimed
         ranker.isClaimed = true;

@@ -117,11 +117,6 @@ describe("BuilderGrantV2", function () {
       );
     });
 
-    it("should revert if emergencyWithdraw is called but balance is already 0", async function () {
-      await builderGrantV2.write.emergencyWithdraw(); // first time OK
-      await expect(builderGrantV2.write.emergencyWithdraw()).to.be.rejectedWith("NothingToWithdraw");
-    });
-
     it("should emit Deposit event on deposit", async function () {
       await huntToken.write.approve([builderGrantV2.address, DEPOSIT_AMOUNT]);
       await expect(builderGrantV2.write.deposit([DEPOSIT_AMOUNT]))
@@ -271,6 +266,13 @@ describe("BuilderGrantV2", function () {
         const seasonAfter = await builderGrantV2.read.getSeason([0n]);
         expect(seasonAfter.totalClaimed).to.equal(2n);
       });
-    });
-  });
-});
+
+      it("should revert if claim deadline is reached", async function () {
+        await time.increase(86400 * 29); // 29 days passed
+        await expect(builderGrantV2.write.claimReward([0n], { account: bob.account })).to.be.rejectedWith(
+          "ClaimDeadlineReached"
+        );
+      });
+    }); // Claiming Rewards
+  }); // Seasons and Claims
+}); // BuilderGrantV2
