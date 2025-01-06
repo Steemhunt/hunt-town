@@ -34,6 +34,7 @@ contract BuilderGrantV2 is Ownable {
     error NothingToClaim();
     error AlreadyClaimed();
     error ClaimDeadlineReached();
+
     // ----------------------------------------
     //          CONSTANTS & IMMUTABLES
     // ----------------------------------------
