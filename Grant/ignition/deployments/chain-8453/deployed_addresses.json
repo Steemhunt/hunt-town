@@ -1,4 +1,5 @@
 {
   "BuilderGrant#BuilderGrant": "0x266bdC0c52B3F2DE94EBe34be270e2615bFb594F",
-  "TipperGrant#TipperGrant": "0x2eF7f539271E3457DBbBDDe78E14DF434D887a69"
+  "TipperGrant#TipperGrant": "0x2eF7f539271E3457DBbBDDe78E14DF434D887a69",
+  "BuilderGrantV2#BuilderGrantV2": "0xBa3C622d0f8d6a7e6e39A2d1915a9dfe76Ed0b0b"
 }
