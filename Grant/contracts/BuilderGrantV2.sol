@@ -207,6 +207,7 @@ contract BuilderGrantV2 is Ownable {
 
         // Get or create season
         Season storage season = seasons[seasonId];
+        season.claimStartedAt = uint40(block.timestamp);
 
         // Add new rankers
         for (uint256 i = 0; i < len; i++) {

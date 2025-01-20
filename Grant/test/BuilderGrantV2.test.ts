@@ -187,6 +187,20 @@ describe("BuilderGrantV2", function () {
       ).to.be.rejectedWith("NotEnoughGrantBalance");
     });
 
+    it("should set claimStartedAt timestamp when creating a season", async function () {
+      const fids = [1001n];
+      const wallets = [getAddress(alice.account.address)];
+      const rewards = [3n];
+
+      // Get current block timestamp
+      const latestBlock = await time.latest();
+
+      await builderGrantV2.write.setSeasonData([0n, fids, wallets, rewards]);
+
+      const season0 = await builderGrantV2.read.getSeason([0n]);
+      expect(season0.claimStartedAt).to.be.greaterThanOrEqual(latestBlock);
+    });
+
     describe("Updating a Season", function () {
       beforeEach(async function () {
         // Create a season #0
@@ -267,8 +281,15 @@ describe("BuilderGrantV2", function () {
         expect(seasonAfter.totalClaimed).to.equal(2n);
       });
 
+      it("should allow claims within deadline", async function () {
+        await time.increase(86400 * 27); // 27 days passed (still within 4 weeks)
+        await expect(builderGrantV2.write.claimReward([0n], { account: bob.account }))
+          .to.emit(builderGrantV2, "ClaimReward")
+          .withArgs(getAddress(bob.account.address), 0n, 1n, 2n);
+      });
+
       it("should revert if claim deadline is reached", async function () {
-        await time.increase(86400 * 29); // 29 days passed
+        await time.increase(86400 * 29); // 29 days passed (> 4 weeks)
         await expect(builderGrantV2.write.claimReward([0n], { account: bob.account })).to.be.rejectedWith(
           "ClaimDeadlineReached"
         );
