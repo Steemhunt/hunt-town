@@ -7,5 +7,11 @@
   },
   "TipperGrant": {
     "huntBase": "0xC435B542aCB241185c72D3653447E070994Da59f"
+  },
+  "_comment2": "Test Token: https://mint.club/token/base/FREE | Test Building - Test building: https://mint.club/nft/base/TEST_BUILD",
+  "BuilderGrantV2": {
+    "mcv2Bond": "0xc5a076cad94176c2996B32d8466Be1cE757FAa27",
+    "huntBase": "0xC435B542aCB241185c72D3653447E070994Da59f",
+    "miniBuilding": "0xE8E5eF74a7e09a0E30c4C8a4B4cFD4B5B8D84d14"
   }
 }

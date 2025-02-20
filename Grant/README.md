@@ -21,6 +21,7 @@ npx hardhat ignition deploy ignition/modules/TipperGrant.ts --network base --par
 
 # BuilderGrantV2 deployment
 npx hardhat ignition deploy ignition/modules/BuilderGrantV2.ts --network base --parameters ignition/prod-params.json --verify --reset
+npx hardhat ignition deploy ignition/modules/BuilderGrantV2.ts --network base --parameters ignition/test-params.json --verify --reset
 ```
 
 ## 🔵 Deployed Contracts on Base
