@@ -14,23 +14,23 @@ contract Mintpad {
     IERC20 private constant HUNT = IERC20(0x37f0c2915CeCC7e977183B8543Fc0864d03E064C);
     address public immutable SIGNER;
     IMCV2_Bond public immutable BOND;
-    uint256 public MAX_HP_PER_MINT = 2000 ether; // 2000 HUNT per mint
+    uint256 public MAX_MP_PER_MINT = 2000 ether; // 2000 HUNT per mint
 
     struct MintHistory {
         address to;
         address token;
         uint128 tokensToMint;
-        uint88 hpAmount;
+        uint88 mpAmount;
         uint40 timestamp;
     }
     MintHistory[] public mintHistory;
     mapping(address => uint40) public userNonce;
 
-    event MintWithHp(
+    event MintWithMp(
         address indexed to,
         address indexed token,
         uint128 tokensToMint,
-        uint88 hpAmount,
+        uint88 mpAmount,
         uint40 timestamp
     );
 
@@ -47,10 +47,10 @@ contract Mintpad {
 
     // MARK: - Admin functions
 
-    function setMaxHpPerMint(uint256 maxHpPerMint) external {
+    function setMaxMpPerMint(uint256 maxMpPerMint) external {
         if (msg.sender != SIGNER) revert Mintpad__PermissionDenied();
 
-        MAX_HP_PER_MINT = maxHpPerMint;
+        MAX_MP_PER_MINT = maxMpPerMint;
     }
 
     function refundHUNT() external {
@@ -61,23 +61,23 @@ contract Mintpad {
 
     // MARK: - Mint functions
 
-    function mint(
+    function mintWithMp(
         address to,
         address token,
         uint128 tokensToMint,
-        uint88 maxHpAmount,
+        uint88 maxMpAmount,
         bytes calldata signature
-    ) external {
+    ) external returns (uint88 mpAmount) {
         if (to == address(0)) revert Mintpad__InvalidParams("to");
         if (token == address(0)) revert Mintpad__InvalidParams("token");
         if (tokensToMint == 0) revert Mintpad__InvalidParams("tokensToMint");
-        if (maxHpAmount == 0) revert Mintpad__InvalidParams("maxHpAmount");
-        if (maxHpAmount > MAX_HP_PER_MINT) revert Mintpad__InvalidParams("maxHpAmount");
-        if (HUNT.balanceOf(address(this)) < maxHpAmount) revert Mintpad__NotEnoughHUNTBalance();
+        if (maxMpAmount == 0) revert Mintpad__InvalidParams("maxMpAmount");
+        if (maxMpAmount > MAX_MP_PER_MINT) revert Mintpad__InvalidParams("maxMpAmount");
+        if (HUNT.balanceOf(address(this)) < maxMpAmount) revert Mintpad__NotEnoughHUNTBalance();
 
         // Verify the signature
         bytes32 signedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            getMessageHash(to, token, tokensToMint, maxHpAmount)
+            getMessageHash(to, token, tokensToMint, maxMpAmount)
         );
 
         // Recover signer from signature
@@ -87,26 +87,26 @@ contract Mintpad {
 
         // Mint and transfer tokens to the receiver
         // Could revert with MCV2_Bond__TokenNotFound() | MCV2_Bond__SlippageLimitExceeded()
-        // NOTE: Force cast to uint88 is safe here as maxHpAmount is checked to be less than MAX_HP_PER_MINT
-        uint88 hpAmount = uint88(BOND.mint(token, tokensToMint, maxHpAmount, to));
-        assert(hpAmount <= maxHpAmount); // is guaranteed by the bond contract
+        // NOTE: Force cast to uint88 is safe here as maxMpAmount is checked to be less than MAX_MP_PER_MINT
+        mpAmount = uint88(BOND.mint(token, tokensToMint, maxMpAmount, to));
+        assert(mpAmount <= maxMpAmount); // is guaranteed by the bond contract
 
-        MintHistory memory newHistory = MintHistory(to, token, tokensToMint, hpAmount, uint40(block.timestamp));
+        MintHistory memory newHistory = MintHistory(to, token, tokensToMint, mpAmount, uint40(block.timestamp));
         mintHistory.push(newHistory);
 
         userNonce[to] += 1;
 
-        emit MintWithHp(to, token, tokensToMint, hpAmount, uint40(block.timestamp));
+        emit MintWithMp(to, token, tokensToMint, mpAmount, uint40(block.timestamp));
     }
 
     function getMessageHash(
         address to,
         address token,
         uint256 tokensToMint,
-        uint256 maxHpAmount
+        uint256 maxMpAmount
     ) public view returns (bytes32) {
         uint256 nonce = userNonce[to];
-        return keccak256(abi.encode(to, token, tokensToMint, maxHpAmount, nonce));
+        return keccak256(abi.encode(to, token, tokensToMint, maxMpAmount, nonce));
     }
 
     // MARK: - View functions
