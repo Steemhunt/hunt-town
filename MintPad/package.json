@@ -1,0 +1,18 @@
+{
+  "name": "MintPad",
+  "version": "1.0.0",
+  "type": "module",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "^3.0.3",
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.0",
+    "@types/node": "^22.18.6",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "hardhat": "^3.0.6",
+    "typescript": "~5.8.0",
+    "viem": "^2.37.6"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "dotenv": "^17.2.2"
+  }
+}
