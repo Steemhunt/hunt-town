@@ -49,30 +49,36 @@ describe("Mintpad", async function () {
   }
 
   // Helper function to generate message hash (matches Solidity's abi.encode)
-  function getMessageHash(to: Address, token: Address, tokensToMint: bigint, maxMpAmount: bigint, nonce: number): Hex {
+  function getMessageHash(
+    user: Address,
+    token: Address,
+    tokensToMint: bigint,
+    maxMpAmount: bigint,
+    nonce: number
+  ): Hex {
     return keccak256(
       encodeAbiParameters(
         [
-          { name: "to", type: "address" },
+          { name: "user", type: "address" },
           { name: "token", type: "address" },
           { name: "tokensToMint", type: "uint128" },
           { name: "maxMpAmount", type: "uint88" },
           { name: "nonce", type: "uint40" }
         ],
-        [to, token, tokensToMint, maxMpAmount, nonce]
+        [user, token, tokensToMint, maxMpAmount, nonce]
       )
     );
   }
 
   // Helper function to sign message
   async function signMessage(
-    to: Address,
+    user: Address,
     token: Address,
     tokensToMint: bigint,
     maxMpAmount: bigint,
     nonce: number
   ): Promise<Hex> {
-    const messageHash = getMessageHash(to, token, tokensToMint, maxMpAmount, nonce);
+    const messageHash = getMessageHash(user, token, tokensToMint, maxMpAmount, nonce);
     const signature = await signerAccount.signMessage({
       message: { raw: messageHash }
     });
@@ -132,7 +138,7 @@ describe("Mintpad", async function () {
         const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, newMaxHp, 0);
 
         // This should not revert due to maxMpAmount limit
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, newMaxHp, signature]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, newMaxHp, signature], { account: alice.account });
       });
 
       it("should revert when non-signer tries to update MAX_MP_PER_MINT", async function () {
@@ -181,20 +187,13 @@ describe("Mintpad", async function () {
 
   describe("Mint function", function () {
     describe("Parameter validation", function () {
-      it("should revert with invalid 'to' address (zero address)", async function () {
-        const signature = await signMessage(ZERO_ADDRESS, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-
-        await assert.rejects(
-          mintpad.write.mintWithMp([ZERO_ADDRESS, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature]),
-          /Mintpad__InvalidParams\("to"\)/
-        );
-      });
-
       it("should revert with invalid 'token' address (zero address)", async function () {
         const signature = await signMessage(alice.account.address, ZERO_ADDRESS, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
 
         await assert.rejects(
-          mintpad.write.mintWithMp([alice.account.address, ZERO_ADDRESS, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature]),
+          mintpad.write.mintWithMp([ZERO_ADDRESS, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], {
+            account: alice.account
+          }),
           /Mintpad__InvalidParams\("token"\)/
         );
       });
@@ -203,7 +202,7 @@ describe("Mintpad", async function () {
         const signature = await signMessage(alice.account.address, TEST_TOKEN, 0n, MAX_MP_AMOUNT, 0);
 
         await assert.rejects(
-          mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, 0n, MAX_MP_AMOUNT, signature]),
+          mintpad.write.mintWithMp([TEST_TOKEN, 0n, MAX_MP_AMOUNT, signature], { account: alice.account }),
           /Mintpad__InvalidParams\("tokensToMint"\)/
         );
       });
@@ -212,7 +211,7 @@ describe("Mintpad", async function () {
         const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, 0n, 0);
 
         await assert.rejects(
-          mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, 0n, signature]),
+          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, 0n, signature], { account: alice.account }),
           /Mintpad__InvalidParams\("maxMpAmount"\)/
         );
       });
@@ -222,7 +221,9 @@ describe("Mintpad", async function () {
         const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, excessiveAmount, 0);
 
         await assert.rejects(
-          mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, excessiveAmount, signature]),
+          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, excessiveAmount, signature], {
+            account: alice.account
+          }),
           /Mintpad__InvalidParams\("maxMpAmount"\)/
         );
       });
@@ -245,7 +246,7 @@ describe("Mintpad", async function () {
         const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
 
         await assert.rejects(
-          mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature]),
+          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], { account: alice.account }),
           /Mintpad__NotEnoughHUNTBalance\(\)/
         );
       });
@@ -257,13 +258,9 @@ describe("Mintpad", async function () {
           "0x1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
 
         await assert.rejects(
-          mintpad.write.mintWithMp([
-            alice.account.address,
-            TEST_TOKEN,
-            TOKENS_TO_MINT,
-            MAX_MP_AMOUNT,
-            invalidSignature
-          ]),
+          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, invalidSignature], {
+            account: alice.account
+          }),
           (error: any) => error.message.includes("ECDSAInvalidSignature")
         );
       });
@@ -279,7 +276,9 @@ describe("Mintpad", async function () {
         });
 
         await assert.rejects(
-          mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, wrongSignature]),
+          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, wrongSignature], {
+            account: alice.account
+          }),
           (error: any) => error.message.includes("Mintpad__InvalidSignature")
         );
       });
@@ -295,7 +294,7 @@ describe("Mintpad", async function () {
         );
 
         await assert.rejects(
-          mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature]),
+          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], { account: alice.account }),
           (error: any) => error.message.includes("Mintpad__InvalidSignature")
         );
       });
@@ -312,7 +311,9 @@ describe("Mintpad", async function () {
           initialNonce
         );
 
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], {
+          account: alice.account
+        });
 
         // Even if the bond call fails, nonce should still be incremented if signature was valid
         const newNonce = await mintpad.read.userNonce([alice.account.address]);
@@ -332,7 +333,7 @@ describe("Mintpad", async function () {
         const timestamp = await time.latest();
 
         await viem.assertions.emitWithArgs(
-          mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature]),
+          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], { account: alice.account }),
           mintpad,
           "MintWithMp",
           [getAddress(alice.account.address), getAddress(TEST_TOKEN), TOKENS_TO_MINT, MAX_MP_AMOUNT, timestamp + 1]
@@ -387,7 +388,9 @@ describe("Mintpad", async function () {
 
         // Perform a mint to increment nonce
         const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], {
+          account: alice.account
+        });
 
         const hashAfterMint = await mintpad.read.getMessageHash([
           alice.account.address,
@@ -409,7 +412,9 @@ describe("Mintpad", async function () {
       it("should increment count after successful mint", async function () {
         // Perform first mint for Alice
         const signature1 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1], {
+          account: alice.account
+        });
 
         let totalCount = await mintpad.read.getMintHistoryCount();
         assert.equal(totalCount, 1n);
@@ -422,26 +427,18 @@ describe("Mintpad", async function () {
           MAX_MP_AMOUNT / 2n,
           1
         );
-        await mintpad.write.mintWithMp([
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT / 2n,
-          MAX_MP_AMOUNT / 2n,
-          signature2
-        ]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT / 2n, MAX_MP_AMOUNT / 2n, signature2], {
+          account: alice.account
+        });
 
         totalCount = await mintpad.read.getMintHistoryCount();
         assert.equal(totalCount, 2n);
 
         // Perform mint for deployer
         const signature3 = await signMessage(deployer.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_MP_AMOUNT,
-          signature3
-        ]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature3], {
+          account: deployer.account
+        });
 
         totalCount = await mintpad.read.getMintHistoryCount();
         assert.equal(totalCount, 3n);
@@ -452,7 +449,9 @@ describe("Mintpad", async function () {
       beforeEach(async function () {
         // Setup some mint history for testing
         const signature1 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1], {
+          account: alice.account
+        });
 
         const signature2 = await signMessage(
           deployer.account.address,
@@ -461,13 +460,9 @@ describe("Mintpad", async function () {
           MAX_MP_AMOUNT / 2n,
           0
         );
-        await mintpad.write.mintWithMp([
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT / 2n,
-          MAX_MP_AMOUNT / 2n,
-          signature2
-        ]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT / 2n, MAX_MP_AMOUNT / 2n, signature2], {
+          account: deployer.account
+        });
 
         const signature3 = await signMessage(
           alice.account.address,
@@ -476,13 +471,9 @@ describe("Mintpad", async function () {
           MAX_MP_AMOUNT * 2n,
           1
         );
-        await mintpad.write.mintWithMp([
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT * 2n,
-          MAX_MP_AMOUNT * 2n,
-          signature3
-        ]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT * 2n, MAX_MP_AMOUNT * 2n, signature3], {
+          account: alice.account
+        });
       });
 
       it("should revert when startIndex > endIndex", async function () {
@@ -493,7 +484,7 @@ describe("Mintpad", async function () {
         const history = await mintpad.read.getMintHistory([0, 0]);
 
         assert.equal(history.length, 1);
-        assert.equal(history[0].to.toLowerCase(), alice.account.address.toLowerCase());
+        assert.equal(history[0].user.toLowerCase(), alice.account.address.toLowerCase());
         assert.equal(history[0].token.toLowerCase(), TEST_TOKEN.toLowerCase());
         assert.equal(history[0].tokensToMint, TOKENS_TO_MINT);
       });
@@ -504,15 +495,15 @@ describe("Mintpad", async function () {
         assert.equal(history.length, 3);
 
         // First entry (Alice's first mint)
-        assert.equal(history[0].to.toLowerCase(), alice.account.address.toLowerCase());
+        assert.equal(history[0].user.toLowerCase(), alice.account.address.toLowerCase());
         assert.equal(history[0].tokensToMint, TOKENS_TO_MINT);
 
         // Second entry (Deployer's mint)
-        assert.equal(history[1].to.toLowerCase(), deployer.account.address.toLowerCase());
+        assert.equal(history[1].user.toLowerCase(), deployer.account.address.toLowerCase());
         assert.equal(history[1].tokensToMint, TOKENS_TO_MINT / 2n);
 
         // Third entry (Alice's second mint)
-        assert.equal(history[2].to.toLowerCase(), alice.account.address.toLowerCase());
+        assert.equal(history[2].user.toLowerCase(), alice.account.address.toLowerCase());
         assert.equal(history[2].tokensToMint, TOKENS_TO_MINT * 2n);
       });
 
@@ -520,17 +511,17 @@ describe("Mintpad", async function () {
         const history = await mintpad.read.getMintHistory([0, 100]); // endIndex way beyond actual length
 
         assert.equal(history.length, 3); // Should return all 3 entries
-        assert.equal(history[0].to.toLowerCase(), alice.account.address.toLowerCase());
-        assert.equal(history[1].to.toLowerCase(), deployer.account.address.toLowerCase());
-        assert.equal(history[2].to.toLowerCase(), alice.account.address.toLowerCase());
+        assert.equal(history[0].user.toLowerCase(), alice.account.address.toLowerCase());
+        assert.equal(history[1].user.toLowerCase(), deployer.account.address.toLowerCase());
+        assert.equal(history[2].user.toLowerCase(), alice.account.address.toLowerCase());
       });
 
       it("should return partial range correctly", async function () {
         const history = await mintpad.read.getMintHistory([1, 2]);
 
         assert.equal(history.length, 2);
-        assert.equal(history[0].to.toLowerCase(), deployer.account.address.toLowerCase());
-        assert.equal(history[1].to.toLowerCase(), alice.account.address.toLowerCase());
+        assert.equal(history[0].user.toLowerCase(), deployer.account.address.toLowerCase());
+        assert.equal(history[1].user.toLowerCase(), alice.account.address.toLowerCase());
         assert.equal(history[1].tokensToMint, TOKENS_TO_MINT * 2n);
       });
     }); // getMintHistory
@@ -544,7 +535,9 @@ describe("Mintpad", async function () {
       it("should return 0 when all history is within 24 hours", async function () {
         // Add some recent history
         const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], {
+          account: alice.account
+        });
 
         const index = await mintpad.read.get24hAgoHistoryIndex();
         assert.equal(index, 0n);
@@ -553,23 +546,21 @@ describe("Mintpad", async function () {
       it("should return correct index when history spans more than 24 hours", async function () {
         // First, add some history
         const signature1 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1], {
+          account: alice.account
+        });
 
         const signature2 = await signMessage(deployer.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_MP_AMOUNT,
-          signature2
-        ]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature2]);
 
         // Advance time by more than 24 hours
         await time.increase(86401); // 24 hours + 1 second
 
         // Add more history after time advancement
         const signature3 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 1);
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature3]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature3], {
+          account: alice.account
+        });
 
         const index = await mintpad.read.get24hAgoHistoryIndex();
         assert.equal(index, 2n); // Should return index 2 (the first entry after 24h ago)
@@ -578,34 +569,26 @@ describe("Mintpad", async function () {
       it("should return correct index with multiple old entries", async function () {
         // Add multiple entries
         const signature1 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1], {
+          account: alice.account
+        });
 
         const signature2 = await signMessage(deployer.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_MP_AMOUNT,
-          signature2
-        ]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature2]);
 
         // Advance time by 12 hours
         await time.increase(43200);
 
         const signature3 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 1);
-        await mintpad.write.mintWithMp([alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature3]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature3], {
+          account: alice.account
+        });
 
         // Advance time by another 13 hours (total 25 hours from first entries)
         await time.increase(46800);
 
         const signature4 = await signMessage(deployer.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 1);
-        await mintpad.write.mintWithMp([
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_MP_AMOUNT,
-          signature4
-        ]);
+        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature4]);
 
         const index = await mintpad.read.get24hAgoHistoryIndex();
         // Should return index pointing to first entry that's within 24 hours

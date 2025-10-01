@@ -17,7 +17,7 @@ contract Mintpad {
     uint256 public MAX_MP_PER_MINT = 2000 ether; // 2000 HUNT per mint
 
     struct MintHistory {
-        address to;
+        address user;
         address token;
         uint128 tokensToMint;
         uint88 mpAmount;
@@ -27,7 +27,7 @@ contract Mintpad {
     mapping(address => uint40) public userNonce;
 
     event MintWithMp(
-        address indexed to,
+        address indexed user,
         address indexed token,
         uint128 tokensToMint,
         uint88 mpAmount,
@@ -62,22 +62,22 @@ contract Mintpad {
     // MARK: - Mint functions
 
     function mintWithMp(
-        address to,
         address token,
         uint128 tokensToMint,
         uint88 maxMpAmount,
         bytes calldata signature
     ) external returns (uint88 mpAmount) {
-        if (to == address(0)) revert Mintpad__InvalidParams("to");
         if (token == address(0)) revert Mintpad__InvalidParams("token");
         if (tokensToMint == 0) revert Mintpad__InvalidParams("tokensToMint");
         if (maxMpAmount == 0) revert Mintpad__InvalidParams("maxMpAmount");
         if (maxMpAmount > MAX_MP_PER_MINT) revert Mintpad__InvalidParams("maxMpAmount");
         if (HUNT.balanceOf(address(this)) < maxMpAmount) revert Mintpad__NotEnoughHUNTBalance();
 
+        address receiver = msg.sender;
+
         // Verify the signature
         bytes32 signedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            getMessageHash(to, token, tokensToMint, maxMpAmount)
+            getMessageHash(receiver, token, tokensToMint, maxMpAmount)
         );
 
         // Recover signer from signature
@@ -88,25 +88,25 @@ contract Mintpad {
         // Mint and transfer tokens to the receiver
         // Could revert with MCV2_Bond__TokenNotFound() | MCV2_Bond__SlippageLimitExceeded()
         // NOTE: Force cast to uint88 is safe here as maxMpAmount is checked to be less than MAX_MP_PER_MINT
-        mpAmount = uint88(BOND.mint(token, tokensToMint, maxMpAmount, to));
+        mpAmount = uint88(BOND.mint(token, tokensToMint, maxMpAmount, receiver));
         assert(mpAmount <= maxMpAmount); // is guaranteed by the bond contract
 
-        MintHistory memory newHistory = MintHistory(to, token, tokensToMint, mpAmount, uint40(block.timestamp));
+        MintHistory memory newHistory = MintHistory(receiver, token, tokensToMint, mpAmount, uint40(block.timestamp));
         mintHistory.push(newHistory);
 
-        userNonce[to] += 1;
+        userNonce[receiver] += 1;
 
-        emit MintWithMp(to, token, tokensToMint, mpAmount, uint40(block.timestamp));
+        emit MintWithMp(receiver, token, tokensToMint, mpAmount, uint40(block.timestamp));
     }
 
     function getMessageHash(
-        address to,
+        address user,
         address token,
         uint256 tokensToMint,
         uint256 maxMpAmount
     ) public view returns (bytes32) {
-        uint256 nonce = userNonce[to];
-        return keccak256(abi.encode(to, token, tokensToMint, maxMpAmount, nonce));
+        uint256 nonce = userNonce[user];
+        return keccak256(abi.encode(user, token, tokensToMint, maxMpAmount, nonce));
     }
 
     // MARK: - View functions
