@@ -10,9 +10,10 @@ const BOND_ADDRESS = "0xc5a076cad94176c2996B32d8466Be1cE757FAa27";
 const HUNT_TOKEN = "0x37f0c2915CeCC7e977183B8543Fc0864d03E064C"; // HUNT token address
 const TEST_TOKEN = "0xAf15A124e3d9e18E82801d69A94279d85BD6289b"; // HEPE
 const TOKENS_TO_MINT = 1_000_000n * 10n ** 18n;
-const MAX_MP_AMOUNT = 10424472304323077000n; // 1M HEPE price at given fork block
+const MAX_HUNT_AMOUNT = 10424472304323077000n; // 1M HEPE price at given fork block
 const INITIAL_HUNT_BALANCE = 10_000n * 10n ** 18n; // 10,000 HUNT tokens
-const DEFAULT_MAX_MP_PER_MINT = 2000n * 10n ** 18n; // 2000 HUNT per mint (default from contract)
+const DEFAULT_MAX_HUNT_PER_MINT = 2000n * 10n ** 18n; // 2000 HUNT per mint (default from contract)
+const DEFAULT_DONATION_BP = 0; // 0% donation by default
 
 describe("Mintpad", async function () {
   const connection = await network.connect("baseFork");
@@ -53,7 +54,8 @@ describe("Mintpad", async function () {
     user: Address,
     token: Address,
     tokensToMint: bigint,
-    maxMpAmount: bigint,
+    maxHuntAmount: bigint,
+    donationBp: number,
     nonce: number
   ): Hex {
     return keccak256(
@@ -62,10 +64,11 @@ describe("Mintpad", async function () {
           { name: "user", type: "address" },
           { name: "token", type: "address" },
           { name: "tokensToMint", type: "uint128" },
-          { name: "maxMpAmount", type: "uint88" },
+          { name: "maxHuntAmount", type: "uint88" },
+          { name: "donationBp", type: "uint16" },
           { name: "nonce", type: "uint40" }
         ],
-        [user, token, tokensToMint, maxMpAmount, nonce]
+        [user, token, tokensToMint, maxHuntAmount, donationBp, nonce]
       )
     );
   }
@@ -75,10 +78,11 @@ describe("Mintpad", async function () {
     user: Address,
     token: Address,
     tokensToMint: bigint,
-    maxMpAmount: bigint,
+    maxHuntAmount: bigint,
+    donationBp: number,
     nonce: number
   ): Promise<Hex> {
-    const messageHash = getMessageHash(user, token, tokensToMint, maxMpAmount, nonce);
+    const messageHash = getMessageHash(user, token, tokensToMint, maxHuntAmount, donationBp, nonce);
     const signature = await signerAccount.signMessage({
       message: { raw: messageHash }
     });
@@ -122,34 +126,43 @@ describe("Mintpad", async function () {
     });
 
     it("should initialize with default MAX_MP_PER_MINT of 2000 HUNT", async function () {
-      const maxMpPerMint = await mintpad.read.MAX_MP_PER_MINT();
-      assert.equal(maxMpPerMint, DEFAULT_MAX_MP_PER_MINT);
+      const maxHuntPerMint = await mintpad.read.MAX_MP_PER_MINT();
+      assert.equal(maxHuntPerMint, DEFAULT_MAX_HUNT_PER_MINT);
     });
   }); // Contract initialization
 
   describe("Admin functions", function () {
-    describe("setMaxMpPerMint", function () {
+    describe("setMaxHuntPerMint", function () {
       it("should allow signer to update MAX_MP_PER_MINT", async function () {
-        const newMaxHp = 5000n * 10n ** 18n; // 5000 HUNT
+        const newMaxHunt = 5000n * 10n ** 18n; // 5000 HUNT
 
-        await mintpad.write.setMaxMpPerMint([newMaxHp], { account: signerAccount });
+        await mintpad.write.setMaxHuntPerMint([newMaxHunt], { account: signerAccount });
 
         // Verify the new limit by checking it allows minting up to the new limit
-        const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, newMaxHp, 0);
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          newMaxHunt,
+          DEFAULT_DONATION_BP,
+          0
+        );
 
-        // This should not revert due to maxMpAmount limit
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, newMaxHp, signature], { account: alice.account });
+        // This should not revert due to maxHuntAmount limit
+        await mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, newMaxHunt, DEFAULT_DONATION_BP, signature], {
+          account: alice.account
+        });
       });
 
       it("should revert when non-signer tries to update MAX_MP_PER_MINT", async function () {
-        const newMaxHp = 5000n * 10n ** 18n;
+        const newMaxHunt = 5000n * 10n ** 18n;
 
         await assert.rejects(
-          mintpad.write.setMaxMpPerMint([newMaxHp], { account: deployer.account }),
+          mintpad.write.setMaxHuntPerMint([newMaxHunt], { account: deployer.account }),
           /Mintpad__PermissionDenied\(\)/
         );
       });
-    }); // setMaxMpPerMint
+    }); // setMaxHuntPerMint
 
     describe("refundHUNT", function () {
       it("should allow signer to refund all HUNT tokens", async function () {
@@ -188,10 +201,17 @@ describe("Mintpad", async function () {
   describe("Mint function", function () {
     describe("Parameter validation", function () {
       it("should revert with invalid 'token' address (zero address)", async function () {
-        const signature = await signMessage(alice.account.address, ZERO_ADDRESS, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
+        const signature = await signMessage(
+          alice.account.address,
+          ZERO_ADDRESS,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
 
         await assert.rejects(
-          mintpad.write.mintWithMp([ZERO_ADDRESS, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], {
+          mintpad.write.mintWithHunt([ZERO_ADDRESS, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
             account: alice.account
           }),
           /Mintpad__InvalidParams\("token"\)/
@@ -199,32 +219,57 @@ describe("Mintpad", async function () {
       });
 
       it("should revert with zero tokensToMint", async function () {
-        const signature = await signMessage(alice.account.address, TEST_TOKEN, 0n, MAX_MP_AMOUNT, 0);
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          0n,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
 
         await assert.rejects(
-          mintpad.write.mintWithMp([TEST_TOKEN, 0n, MAX_MP_AMOUNT, signature], { account: alice.account }),
+          mintpad.write.mintWithHunt([TEST_TOKEN, 0n, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
+            account: alice.account
+          }),
           /Mintpad__InvalidParams\("tokensToMint"\)/
         );
       });
 
-      it("should revert with zero maxMpAmount", async function () {
-        const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, 0n, 0);
+      it("should revert with zero maxHuntAmount", async function () {
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          0n,
+          DEFAULT_DONATION_BP,
+          0
+        );
 
         await assert.rejects(
-          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, 0n, signature], { account: alice.account }),
-          /Mintpad__InvalidParams\("maxMpAmount"\)/
+          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, 0n, DEFAULT_DONATION_BP, signature], {
+            account: alice.account
+          }),
+          /Mintpad__InvalidParams\("maxHuntAmount"\)/
         );
       });
 
-      it("should revert when maxMpAmount exceeds MAX_MP_PER_MINT", async function () {
-        const excessiveAmount = DEFAULT_MAX_MP_PER_MINT + 1n;
-        const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, excessiveAmount, 0);
+      it("should revert when maxHuntAmount exceeds MAX_MP_PER_MINT", async function () {
+        const excessiveAmount = DEFAULT_MAX_HUNT_PER_MINT + 1n;
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          excessiveAmount,
+          DEFAULT_DONATION_BP,
+          0
+        );
 
         await assert.rejects(
-          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, excessiveAmount, signature], {
+          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, excessiveAmount, DEFAULT_DONATION_BP, signature], {
             account: alice.account
           }),
-          /Mintpad__InvalidParams\("maxMpAmount"\)/
+          /Mintpad__InvalidParams\("maxHuntAmount"\)/
         );
       });
 
@@ -243,11 +288,20 @@ describe("Mintpad", async function () {
         await mintpad.write.refundHUNT({ account: signerAccount });
 
         // Try to mint with more than available balance
-        const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
 
         await assert.rejects(
-          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], { account: alice.account }),
-          /Mintpad__NotEnoughHUNTBalance\(\)/
+          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
+            account: alice.account
+          }),
+          /Mintpad__NotEnoughHuntBalance\(\)/
         );
       });
     }); // Parameter validation
@@ -258,9 +312,12 @@ describe("Mintpad", async function () {
           "0x1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
 
         await assert.rejects(
-          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, invalidSignature], {
-            account: alice.account
-          }),
+          mintpad.write.mintWithHunt(
+            [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, invalidSignature],
+            {
+              account: alice.account
+            }
+          ),
           (error: any) => error.message.includes("ECDSAInvalidSignature")
         );
       });
@@ -269,16 +326,26 @@ describe("Mintpad", async function () {
         const wrongSignerPrivateKey = "0x9876543210987654321098765432109876543210987654321098765432109876";
         const wrongSignerAccount = privateKeyToAccount(wrongSignerPrivateKey);
 
-        const messageHash = getMessageHash(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
+        const messageHash = getMessageHash(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
 
         const wrongSignature = await wrongSignerAccount.signMessage({
           message: { raw: messageHash }
         });
 
         await assert.rejects(
-          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, wrongSignature], {
-            account: alice.account
-          }),
+          mintpad.write.mintWithHunt(
+            [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, wrongSignature],
+            {
+              account: alice.account
+            }
+          ),
           (error: any) => error.message.includes("Mintpad__InvalidSignature")
         );
       });
@@ -289,12 +356,15 @@ describe("Mintpad", async function () {
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT,
-          MAX_MP_AMOUNT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
           wrongNonce
         );
 
         await assert.rejects(
-          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], { account: alice.account }),
+          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
+            account: alice.account
+          }),
           (error: any) => error.message.includes("Mintpad__InvalidSignature")
         );
       });
@@ -307,37 +377,191 @@ describe("Mintpad", async function () {
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT,
-          MAX_MP_AMOUNT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
           initialNonce
         );
 
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], {
-          account: alice.account
-        });
+        // Get initial token balances
+        const testToken = getContract({
+          address: TEST_TOKEN,
+          abi: erc20Abi,
+          client: deployer
+        }) as any;
+        const initialAliceBalance = await testToken.read.balanceOf([alice.account.address]);
 
-        // Even if the bond call fails, nonce should still be incremented if signature was valid
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature],
+          {
+            account: alice.account
+          }
+        );
+
+        // Check that nonce was incremented
         const newNonce = await mintpad.read.userNonce([alice.account.address]);
         assert.equal(newNonce, initialNonce + 1);
+
+        // Check that tokens were minted and transferred to Alice
+        const finalAliceBalance = await testToken.read.balanceOf([alice.account.address]);
+        assert.equal(finalAliceBalance, initialAliceBalance + TOKENS_TO_MINT);
       });
 
-      it("should emit MintWithMp event on successful mint", async function () {
+      it("should emit Minted event on successful mint", async function () {
         const initialNonce = await mintpad.read.userNonce([alice.account.address]);
         const signature = await signMessage(
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT,
-          MAX_MP_AMOUNT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
           initialNonce
         );
 
         const timestamp = await time.latest();
 
         await viem.assertions.emitWithArgs(
-          mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], { account: alice.account }),
+          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
+            account: alice.account
+          }),
           mintpad,
-          "MintWithMp",
-          [getAddress(alice.account.address), getAddress(TEST_TOKEN), TOKENS_TO_MINT, MAX_MP_AMOUNT, timestamp + 1]
+          "Minted",
+          [
+            getAddress(alice.account.address),
+            MAX_HUNT_AMOUNT,
+            getAddress(TEST_TOKEN),
+            timestamp + 1,
+            TOKENS_TO_MINT,
+            0n
+          ]
         );
+      });
+      it("should revert with invalid donationBp (> 10000)", async function () {
+        const invalidDonationBp = 10001;
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          invalidDonationBp,
+          0
+        );
+
+        await assert.rejects(
+          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, invalidDonationBp, signature], {
+            account: alice.account
+          }),
+          /Mintpad__InvalidParams\("donationBp"\)/
+        );
+      });
+
+      it("should handle donation correctly when donationBp > 0", async function () {
+        const donationBp = 1000; // 10% donation
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          donationBp,
+          0
+        );
+
+        const initialNonce = await mintpad.read.userNonce([alice.account.address]);
+
+        // Get token contract and creator address
+        const testToken = getContract({
+          address: TEST_TOKEN,
+          abi: erc20Abi,
+          client: deployer
+        }) as any;
+        const bondContract = getContract({
+          address: BOND_ADDRESS,
+          abi: [
+            {
+              name: "tokenBond",
+              type: "function",
+              stateMutability: "view",
+              inputs: [{ name: "token", type: "address" }],
+              outputs: [
+                { name: "creator", type: "address" },
+                { name: "mintRoyalty", type: "uint16" },
+                { name: "burnRoyalty", type: "uint16" },
+                { name: "createdAt", type: "uint40" },
+                { name: "reserveToken", type: "address" },
+                { name: "reserveBalance", type: "uint256" }
+              ]
+            }
+          ],
+          client: deployer
+        }) as any;
+
+        const [tokenCreator] = await bondContract.read.tokenBond([TEST_TOKEN]);
+
+        // Get initial balances
+        const initialAliceBalance = await testToken.read.balanceOf([alice.account.address]);
+        const initialCreatorBalance = await testToken.read.balanceOf([tokenCreator]);
+
+        await mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, donationBp, signature], {
+          account: alice.account
+        });
+
+        // Check that nonce was incremented
+        const newNonce = await mintpad.read.userNonce([alice.account.address]);
+        assert.equal(newNonce, initialNonce + 1);
+
+        // Calculate expected amounts
+        const expectedDonation = (TOKENS_TO_MINT * BigInt(donationBp)) / 10000n;
+        const expectedAliceTokens = TOKENS_TO_MINT - expectedDonation;
+
+        // Check that tokens were distributed correctly
+        const finalAliceBalance = await testToken.read.balanceOf([alice.account.address]);
+        const finalCreatorBalance = await testToken.read.balanceOf([tokenCreator]);
+
+        assert.equal(finalAliceBalance, initialAliceBalance + expectedAliceTokens);
+        assert.equal(finalCreatorBalance, initialCreatorBalance + expectedDonation);
+
+        // Check mint history includes donation info
+        const history = await mintpad.read.getMintHistory([0, 0]);
+        assert.equal(history.length, 1);
+        assert.equal(history[0].totalTokensMinted, TOKENS_TO_MINT);
+        assert.equal(history[0].tokensDonated, expectedDonation);
+      });
+
+      it("should mint tokens correctly with zero donation", async function () {
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP, // 0% donation
+          0
+        );
+
+        // Get token contract
+        const testToken = getContract({
+          address: TEST_TOKEN,
+          abi: erc20Abi,
+          client: deployer
+        }) as any;
+
+        // Get initial balance
+        const initialAliceBalance = await testToken.read.balanceOf([alice.account.address]);
+
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature],
+          {
+            account: alice.account
+          }
+        );
+
+        // Check that all tokens went to Alice (no donation)
+        const finalAliceBalance = await testToken.read.balanceOf([alice.account.address]);
+        assert.equal(finalAliceBalance, initialAliceBalance + TOKENS_TO_MINT);
+
+        // Check mint history shows zero donation
+        const history = await mintpad.read.getMintHistory([0, 0]);
+        assert.equal(history.length, 1);
+        assert.equal(history[0].totalTokensMinted, TOKENS_TO_MINT);
+        assert.equal(history[0].tokensDonated, 0n);
       });
     }); // Success cases
   }); // Mint function
@@ -349,13 +573,15 @@ describe("Mintpad", async function () {
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT,
-          MAX_MP_AMOUNT
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP
         ]);
         const hash2 = await mintpad.read.getMessageHash([
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT,
-          MAX_MP_AMOUNT
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP
         ]);
 
         assert.equal(hash1, hash2);
@@ -366,13 +592,15 @@ describe("Mintpad", async function () {
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT,
-          MAX_MP_AMOUNT
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP
         ]);
         const hash2 = await mintpad.read.getMessageHash([
           deployer.account.address, // Different address
           TEST_TOKEN,
           TOKENS_TO_MINT,
-          MAX_MP_AMOUNT
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP
         ]);
 
         assert.notEqual(hash1, hash2);
@@ -383,20 +611,32 @@ describe("Mintpad", async function () {
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT,
-          MAX_MP_AMOUNT
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP
         ]);
 
         // Perform a mint to increment nonce
-        const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], {
-          account: alice.account
-        });
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature],
+          {
+            account: alice.account
+          }
+        );
 
         const hashAfterMint = await mintpad.read.getMessageHash([
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT,
-          MAX_MP_AMOUNT
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP
         ]);
 
         assert.notEqual(hashBeforeMint, hashAfterMint);
@@ -411,10 +651,20 @@ describe("Mintpad", async function () {
 
       it("should increment count after successful mint", async function () {
         // Perform first mint for Alice
-        const signature1 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1], {
-          account: alice.account
-        });
+        const signature1 = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature1],
+          {
+            account: alice.account
+          }
+        );
 
         let totalCount = await mintpad.read.getMintHistoryCount();
         assert.equal(totalCount, 1n);
@@ -424,21 +674,35 @@ describe("Mintpad", async function () {
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT / 2n,
-          MAX_MP_AMOUNT / 2n,
+          MAX_HUNT_AMOUNT / 2n,
+          DEFAULT_DONATION_BP,
           1
         );
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT / 2n, MAX_MP_AMOUNT / 2n, signature2], {
-          account: alice.account
-        });
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT / 2n, MAX_HUNT_AMOUNT / 2n, DEFAULT_DONATION_BP, signature2],
+          {
+            account: alice.account
+          }
+        );
 
         totalCount = await mintpad.read.getMintHistoryCount();
         assert.equal(totalCount, 2n);
 
         // Perform mint for deployer
-        const signature3 = await signMessage(deployer.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature3], {
-          account: deployer.account
-        });
+        const signature3 = await signMessage(
+          deployer.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature3],
+          {
+            account: deployer.account
+          }
+        );
 
         totalCount = await mintpad.read.getMintHistoryCount();
         assert.equal(totalCount, 3n);
@@ -448,32 +712,50 @@ describe("Mintpad", async function () {
     describe("getMintHistory", function () {
       beforeEach(async function () {
         // Setup some mint history for testing
-        const signature1 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1], {
-          account: alice.account
-        });
+        const signature1 = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature1],
+          {
+            account: alice.account
+          }
+        );
 
         const signature2 = await signMessage(
           deployer.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT / 2n,
-          MAX_MP_AMOUNT / 2n,
+          MAX_HUNT_AMOUNT / 2n,
+          DEFAULT_DONATION_BP,
           0
         );
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT / 2n, MAX_MP_AMOUNT / 2n, signature2], {
-          account: deployer.account
-        });
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT / 2n, MAX_HUNT_AMOUNT / 2n, DEFAULT_DONATION_BP, signature2],
+          {
+            account: deployer.account
+          }
+        );
 
         const signature3 = await signMessage(
           alice.account.address,
           TEST_TOKEN,
           TOKENS_TO_MINT * 2n,
-          MAX_MP_AMOUNT * 2n,
+          MAX_HUNT_AMOUNT * 2n,
+          DEFAULT_DONATION_BP,
           1
         );
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT * 2n, MAX_MP_AMOUNT * 2n, signature3], {
-          account: alice.account
-        });
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT * 2n, MAX_HUNT_AMOUNT * 2n, DEFAULT_DONATION_BP, signature3],
+          {
+            account: alice.account
+          }
+        );
       });
 
       it("should revert when startIndex > endIndex", async function () {
@@ -486,7 +768,8 @@ describe("Mintpad", async function () {
         assert.equal(history.length, 1);
         assert.equal(history[0].user.toLowerCase(), alice.account.address.toLowerCase());
         assert.equal(history[0].token.toLowerCase(), TEST_TOKEN.toLowerCase());
-        assert.equal(history[0].tokensToMint, TOKENS_TO_MINT);
+        assert.equal(history[0].totalTokensMinted, TOKENS_TO_MINT);
+        assert.equal(history[0].tokensDonated, 0n);
       });
 
       it("should return multiple history entries", async function () {
@@ -496,15 +779,18 @@ describe("Mintpad", async function () {
 
         // First entry (Alice's first mint)
         assert.equal(history[0].user.toLowerCase(), alice.account.address.toLowerCase());
-        assert.equal(history[0].tokensToMint, TOKENS_TO_MINT);
+        assert.equal(history[0].totalTokensMinted, TOKENS_TO_MINT);
+        assert.equal(history[0].tokensDonated, 0n);
 
         // Second entry (Deployer's mint)
         assert.equal(history[1].user.toLowerCase(), deployer.account.address.toLowerCase());
-        assert.equal(history[1].tokensToMint, TOKENS_TO_MINT / 2n);
+        assert.equal(history[1].totalTokensMinted, TOKENS_TO_MINT / 2n);
+        assert.equal(history[1].tokensDonated, 0n);
 
         // Third entry (Alice's second mint)
         assert.equal(history[2].user.toLowerCase(), alice.account.address.toLowerCase());
-        assert.equal(history[2].tokensToMint, TOKENS_TO_MINT * 2n);
+        assert.equal(history[2].totalTokensMinted, TOKENS_TO_MINT * 2n);
+        assert.equal(history[2].tokensDonated, 0n);
       });
 
       it("should handle endIndex beyond array length", async function () {
@@ -522,7 +808,8 @@ describe("Mintpad", async function () {
         assert.equal(history.length, 2);
         assert.equal(history[0].user.toLowerCase(), deployer.account.address.toLowerCase());
         assert.equal(history[1].user.toLowerCase(), alice.account.address.toLowerCase());
-        assert.equal(history[1].tokensToMint, TOKENS_TO_MINT * 2n);
+        assert.equal(history[1].totalTokensMinted, TOKENS_TO_MINT * 2n);
+        assert.equal(history[1].tokensDonated, 0n);
       });
     }); // getMintHistory
 
@@ -534,10 +821,20 @@ describe("Mintpad", async function () {
 
       it("should return 0 when all history is within 24 hours", async function () {
         // Add some recent history
-        const signature = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature], {
-          account: alice.account
-        });
+        const signature = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature],
+          {
+            account: alice.account
+          }
+        );
 
         const index = await mintpad.read.get24hAgoHistoryIndex();
         assert.equal(index, 0n);
@@ -545,22 +842,55 @@ describe("Mintpad", async function () {
 
       it("should return correct index when history spans more than 24 hours", async function () {
         // First, add some history
-        const signature1 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1], {
-          account: alice.account
-        });
+        const signature1 = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature1],
+          {
+            account: alice.account
+          }
+        );
 
-        const signature2 = await signMessage(deployer.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature2]);
+        const signature2 = await signMessage(
+          deployer.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
+        await mintpad.write.mintWithHunt([
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          signature2
+        ]);
 
         // Advance time by more than 24 hours
         await time.increase(86401); // 24 hours + 1 second
 
         // Add more history after time advancement
-        const signature3 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 1);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature3], {
-          account: alice.account
-        });
+        const signature3 = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          1
+        );
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature3],
+          {
+            account: alice.account
+          }
+        );
 
         const index = await mintpad.read.get24hAgoHistoryIndex();
         assert.equal(index, 2n); // Should return index 2 (the first entry after 24h ago)
@@ -568,27 +898,73 @@ describe("Mintpad", async function () {
 
       it("should return correct index with multiple old entries", async function () {
         // Add multiple entries
-        const signature1 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature1], {
-          account: alice.account
-        });
+        const signature1 = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature1],
+          {
+            account: alice.account
+          }
+        );
 
-        const signature2 = await signMessage(deployer.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 0);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature2]);
+        const signature2 = await signMessage(
+          deployer.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          0
+        );
+        await mintpad.write.mintWithHunt([
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          signature2
+        ]);
 
         // Advance time by 12 hours
         await time.increase(43200);
 
-        const signature3 = await signMessage(alice.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 1);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature3], {
-          account: alice.account
-        });
+        const signature3 = await signMessage(
+          alice.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          1
+        );
+        await mintpad.write.mintWithHunt(
+          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature3],
+          {
+            account: alice.account
+          }
+        );
 
         // Advance time by another 13 hours (total 25 hours from first entries)
         await time.increase(46800);
 
-        const signature4 = await signMessage(deployer.account.address, TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, 1);
-        await mintpad.write.mintWithMp([TEST_TOKEN, TOKENS_TO_MINT, MAX_MP_AMOUNT, signature4]);
+        const signature4 = await signMessage(
+          deployer.account.address,
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          1
+        );
+        await mintpad.write.mintWithHunt([
+          TEST_TOKEN,
+          TOKENS_TO_MINT,
+          MAX_HUNT_AMOUNT,
+          DEFAULT_DONATION_BP,
+          signature4
+        ]);
 
         const index = await mintpad.read.get24hAgoHistoryIndex();
         // Should return index pointing to first entry that's within 24 hours
