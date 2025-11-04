@@ -1,37 +1,25 @@
 import assert from "node:assert/strict";
 import { describe, it, beforeEach } from "node:test";
 import { network } from "hardhat";
-import { encodeAbiParameters, keccak256, getAddress, Address, Hex, getContract, erc20Abi } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { getAddress, getContract, erc20Abi } from "viem";
 
 // Constants for testing
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const BOND_ADDRESS = "0xc5a076cad94176c2996B32d8466Be1cE757FAa27";
 const HUNT_TOKEN = "0x37f0c2915CeCC7e977183B8543Fc0864d03E064C"; // HUNT token address
-const TEST_TOKEN = "0xAf15A124e3d9e18E82801d69A94279d85BD6289b"; // HEPE
-const TOKENS_TO_MINT = 1_000_000n * 10n ** 18n;
-const MAX_HUNT_AMOUNT = 10424472304323077000n; // 1M HEPE price at given fork block
-const INITIAL_HUNT_BALANCE = 10_000n * 10n ** 18n; // 10,000 HUNT tokens
-const DEFAULT_MAX_HUNT_PER_MINT = 2000n * 10n ** 18n; // 2000 HUNT per mint (default from contract)
-const DEFAULT_DONATION_BP = 0; // 0% donation by default
+const TEST_TOKEN = "0xDF2B673Ec06d210C8A8Be89441F8de60B5C679c9"; // SIGNET
+const INITIAL_HUNT_BALANCE = 10_000n * 10n ** 18n; // 10,000 HUNT tokens for testing
+const VOTE_EXPIRATION_DAYS = 30n;
 
 describe("Mintpad", async function () {
   const connection = await network.connect("baseFork");
   const { viem, networkHelpers } = connection;
-  const { time, impersonateAccount, stopImpersonatingAccount } = networkHelpers;
+  const { impersonateAccount, stopImpersonatingAccount } = networkHelpers;
 
   async function deployMintpadFixture() {
-    const signerPrivateKey = "0xe351f9daa1f11b4ca59a766525bb9c8d6d263edc8af921b9d2f083c9897f7aca";
-    const signerAccount = privateKeyToAccount(signerPrivateKey);
-    const [deployer, alice] = await viem.getWalletClients();
+    const [owner, alice, bob] = await viem.getWalletClients();
 
-    // Send some ETH to the signer
-    await deployer.sendTransaction({
-      to: signerAccount.address,
-      value: 1n * 10n ** 18n
-    });
-
-    const mintpad = await viem.deployContract("Mintpad", [signerAccount.address, BOND_ADDRESS]);
+    const mintpad = await viem.deployContract("Mintpad", [BOND_ADDRESS]);
 
     // Impersonate an address with enough HUNT balance and transfer HUNT to Mintpad contract
     const impersonatedAddress = "0xCB3f3e0E992435390e686D7b638FCb8baBa6c5c7";
@@ -39,440 +27,521 @@ describe("Mintpad", async function () {
     const huntToken = getContract({
       address: HUNT_TOKEN,
       abi: erc20Abi,
-      client: deployer
+      client: owner
     });
     await huntToken.write.transfer([mintpad.address, INITIAL_HUNT_BALANCE], {
       account: impersonatedAddress
     });
     await stopImpersonatingAccount(impersonatedAddress);
 
-    return { mintpad, deployer, alice, signerAccount };
-  }
-
-  // Helper function to generate message hash (matches Solidity's abi.encode)
-  function getMessageHash(
-    user: Address,
-    token: Address,
-    tokensToMint: bigint,
-    maxHuntAmount: bigint,
-    donationBp: number,
-    nonce: number
-  ): Hex {
-    return keccak256(
-      encodeAbiParameters(
-        [
-          { name: "user", type: "address" },
-          { name: "token", type: "address" },
-          { name: "tokensToMint", type: "uint128" },
-          { name: "maxHuntAmount", type: "uint88" },
-          { name: "donationBp", type: "uint16" },
-          { name: "nonce", type: "uint40" }
-        ],
-        [user, token, tokensToMint, maxHuntAmount, donationBp, nonce]
-      )
-    );
-  }
-
-  // Helper function to sign message
-  async function signMessage(
-    user: Address,
-    token: Address,
-    tokensToMint: bigint,
-    maxHuntAmount: bigint,
-    donationBp: number,
-    nonce: number
-  ): Promise<Hex> {
-    const messageHash = getMessageHash(user, token, tokensToMint, maxHuntAmount, donationBp, nonce);
-    const signature = await signerAccount.signMessage({
-      message: { raw: messageHash }
+    const testToken = getContract({
+      address: TEST_TOKEN,
+      abi: erc20Abi,
+      client: owner
     });
-    return signature;
+
+    return { mintpad, owner, alice, bob, huntToken, testToken };
   }
 
   let mintpad: any;
-  let deployer: any;
+  let owner: any;
   let alice: any;
-  let signerAccount: ReturnType<typeof privateKeyToAccount>;
+  let bob: any;
+  let huntToken: any;
+  let testToken: any;
 
   beforeEach(async function () {
-    ({ mintpad, deployer, alice, signerAccount } = await networkHelpers.loadFixture(deployMintpadFixture));
+    ({ mintpad, owner, alice, bob, huntToken, testToken } = await networkHelpers.loadFixture(deployMintpadFixture));
   });
 
   describe("Contract initialization", function () {
-    it("should deploy with correct signer and bond addresses", async function () {
-      // We can't directly read the immutable variables, but we can test by trying to mint with correct signature
-      const nonce = await mintpad.read.userNonce([alice.account.address]);
-      assert.equal(nonce, 0);
+    it("should deploy with correct bond address", async function () {
+      const bondAddress = await mintpad.read.BOND();
+      assert.equal(bondAddress.toLowerCase(), BOND_ADDRESS.toLowerCase());
     });
 
-    it("should initialize user nonces to zero", async function () {
-      const aliceNonce = await mintpad.read.userNonce([alice.account.address]);
-      const deployerNonce = await mintpad.read.userNonce([deployer.account.address]);
-
-      assert.equal(aliceNonce, 0);
-      assert.equal(deployerNonce, 0);
+    it("should initialize dayCounter to zero", async function () {
+      const dayCounter = await mintpad.read.dayCounter();
+      assert.equal(dayCounter, 0n);
     });
 
-    it("should have received 10,000 HUNT tokens", async function () {
-      // Get HUNT token contract instance to check balance
-      const huntToken = getContract({
-        address: HUNT_TOKEN,
-        abi: erc20Abi,
-        client: deployer
-      }) as any;
-
+    it("should have received HUNT tokens", async function () {
       const contractBalance = await huntToken.read.balanceOf([mintpad.address]);
       assert.equal(contractBalance, INITIAL_HUNT_BALANCE);
     });
 
-    it("should initialize with default MAX_MP_PER_MINT of 2000 HUNT", async function () {
-      const maxHuntPerMint = await mintpad.read.MAX_MP_PER_MINT();
-      assert.equal(maxHuntPerMint, DEFAULT_MAX_HUNT_PER_MINT);
+    it("should initialize isRollOverInProgress to false", async function () {
+      const isRollOverInProgress = await mintpad.read.isRollOverInProgress();
+      assert.equal(isRollOverInProgress, false);
+    });
+
+    it("should set VOTE_EXPIRATION_DAYS to 30", async function () {
+      const expirationDays = await mintpad.read.VOTE_EXPIRATION_DAYS();
+      assert.equal(expirationDays, VOTE_EXPIRATION_DAYS);
     });
   }); // Contract initialization
 
   describe("Admin functions", function () {
-    describe("setMaxHuntPerMint", function () {
-      it("should allow signer to update MAX_MP_PER_MINT", async function () {
-        const newMaxHunt = 5000n * 10n ** 18n; // 5000 HUNT
+    describe("startRollOver", function () {
+      it("should allow owner to start roll-over", async function () {
+        await mintpad.write.startRollOver({ account: owner.account });
 
-        await mintpad.write.setMaxHuntPerMint([newMaxHunt], { account: signerAccount });
+        const isRollOverInProgress = await mintpad.read.isRollOverInProgress();
+        const dayCounter = await mintpad.read.dayCounter();
 
-        // Verify the new limit by checking it allows minting up to the new limit
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          newMaxHunt,
-          DEFAULT_DONATION_BP,
-          0
-        );
-
-        // This should not revert due to maxHuntAmount limit
-        await mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, newMaxHunt, DEFAULT_DONATION_BP, signature], {
-          account: alice.account
-        });
+        assert.equal(isRollOverInProgress, true);
+        assert.equal(dayCounter, 1n);
       });
 
-      it("should revert when non-signer tries to update MAX_MP_PER_MINT", async function () {
-        const newMaxHunt = 5000n * 10n ** 18n;
+      it("should revert when non-owner tries to start roll-over", async function () {
+        await assert.rejects(mintpad.write.startRollOver({ account: alice.account }), /OwnableUnauthorizedAccount/);
+      });
+
+      it("should increment dayCounter each time", async function () {
+        await mintpad.write.startRollOver({ account: owner.account });
+        let dayCounter = await mintpad.read.dayCounter();
+        assert.equal(dayCounter, 1n);
+
+        await mintpad.write.endRollOver([100], { account: owner.account });
+        await mintpad.write.startRollOver({ account: owner.account });
+        dayCounter = await mintpad.read.dayCounter();
+        assert.equal(dayCounter, 2n);
+      });
+    }); // startRollOver
+
+    describe("endRollOver", function () {
+      beforeEach(async function () {
+        await mintpad.write.startRollOver({ account: owner.account });
+      });
+
+      it("should allow owner to end roll-over", async function () {
+        const totalHuntReward = 1000; // 1000 HUNT in ether units
+
+        await mintpad.write.endRollOver([totalHuntReward], { account: owner.account });
+
+        const isRollOverInProgress = await mintpad.read.isRollOverInProgress();
+        assert.equal(isRollOverInProgress, false);
+
+        const dayCounter = await mintpad.read.dayCounter();
+        const stats = await mintpad.read.dailyStats([dayCounter]);
+        assert.equal(stats[2], totalHuntReward); // totalHuntReward field
+      });
+
+      it("should revert when non-owner tries to end roll-over", async function () {
+        await assert.rejects(
+          mintpad.write.endRollOver([1000], { account: alice.account }),
+          /OwnableUnauthorizedAccount/
+        );
+      });
+
+      it("should revert when not in roll-over", async function () {
+        await mintpad.write.endRollOver([1000], { account: owner.account });
 
         await assert.rejects(
-          mintpad.write.setMaxHuntPerMint([newMaxHunt], { account: deployer.account }),
-          /Mintpad__PermissionDenied\(\)/
+          mintpad.write.endRollOver([1000], { account: owner.account }),
+          /Mintpad__RollOverNotInProgress/
         );
       });
-    }); // setMaxHuntPerMint
+    }); // endRollOver
+
+    describe("setVotingPoints", function () {
+      beforeEach(async function () {
+        await mintpad.write.startRollOver({ account: owner.account });
+      });
+
+      it("should allow owner to set voting points", async function () {
+        const users = [alice.account.address, bob.account.address];
+        const points = [100, 200];
+
+        await mintpad.write.setVotingPoints([users, points], { account: owner.account });
+
+        const dayCounter = await mintpad.read.dayCounter();
+        const alicePoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
+        const bobPoints = await mintpad.read.dailyUserVotingPoint([dayCounter, bob.account.address]);
+
+        assert.equal(alicePoints, 100);
+        assert.equal(bobPoints, 200);
+
+        const stats = await mintpad.read.dailyStats([dayCounter]);
+        assert.equal(stats[0], 300); // totalVotingPointGiven
+      });
+
+      it("should emit VotingPointsUpdated event", async function () {
+        const users = [alice.account.address];
+        const points = [100];
+
+        const dayCounter = await mintpad.read.dayCounter();
+
+        await viem.assertions.emitWithArgs(
+          mintpad.write.setVotingPoints([users, points], { account: owner.account }),
+          mintpad,
+          "VotingPointsUpdated",
+          [dayCounter, 1n, 100]
+        );
+      });
+
+      it("should revert when non-owner tries to set voting points", async function () {
+        await assert.rejects(
+          mintpad.write.setVotingPoints([[alice.account.address], [100]], { account: alice.account }),
+          /OwnableUnauthorizedAccount/
+        );
+      });
+
+      it("should revert when not in roll-over", async function () {
+        await mintpad.write.endRollOver([1000], { account: owner.account });
+
+        await assert.rejects(
+          mintpad.write.setVotingPoints([[alice.account.address], [100]], { account: owner.account }),
+          /Mintpad__RollOverNotInProgress/
+        );
+      });
+
+      it("should revert when array lengths mismatch", async function () {
+        await assert.rejects(
+          mintpad.write.setVotingPoints([[alice.account.address, bob.account.address], [100]], {
+            account: owner.account
+          }),
+          /Mintpad__InvalidParams\("length mismatch"\)/
+        );
+      });
+    }); // setVotingPoints
 
     describe("refundHUNT", function () {
-      it("should allow signer to refund all HUNT tokens", async function () {
-        const huntToken = getContract({
-          address: HUNT_TOKEN,
-          abi: erc20Abi,
-          client: deployer
-        }) as any;
-
+      it("should allow owner to refund HUNT tokens", async function () {
         const initialContractBalance = await huntToken.read.balanceOf([mintpad.address]);
-        const initialSignerBalance = await huntToken.read.balanceOf([signerAccount.address]);
+        const initialOwnerBalance = await huntToken.read.balanceOf([owner.account.address]);
+        const refundAmount = 10_000n * 10n ** 18n;
 
-        await mintpad.write.refundHUNT({ account: signerAccount });
+        await mintpad.write.refundHUNT([refundAmount], { account: owner.account });
 
         const finalContractBalance = await huntToken.read.balanceOf([mintpad.address]);
-        const finalSignerBalance = await huntToken.read.balanceOf([signerAccount.address]);
+        const finalOwnerBalance = await huntToken.read.balanceOf([owner.account.address]);
 
-        assert.equal(finalContractBalance, 0n);
-        assert.equal(finalSignerBalance, initialSignerBalance + initialContractBalance);
+        assert.equal(finalContractBalance, initialContractBalance - refundAmount);
+        assert.equal(finalOwnerBalance, initialOwnerBalance + refundAmount);
       });
 
-      it("should revert when non-signer tries to refund HUNT", async function () {
-        await assert.rejects(mintpad.write.refundHUNT({ account: deployer.account }), /Mintpad__PermissionDenied\(\)/);
+      it("should revert when non-owner tries to refund HUNT", async function () {
+        await assert.rejects(
+          mintpad.write.refundHUNT([1000n * 10n ** 18n], { account: alice.account }),
+          /OwnableUnauthorizedAccount/
+        );
       });
 
-      it("should handle refund when contract has zero balance", async function () {
-        // First refund to empty the contract
-        await mintpad.write.refundHUNT({ account: signerAccount });
+      it("should revert with zero amount", async function () {
+        await assert.rejects(
+          mintpad.write.refundHUNT([0n], { account: owner.account }),
+          /Mintpad__InvalidParams\("amount cannot be zero"\)/
+        );
+      });
 
-        // Second refund should still work (transferring 0 tokens)
-        await mintpad.write.refundHUNT({ account: signerAccount });
+      it("should revert with insufficient balance", async function () {
+        const excessiveAmount = INITIAL_HUNT_BALANCE + 1n;
+
+        await assert.rejects(
+          mintpad.write.refundHUNT([excessiveAmount], { account: owner.account }),
+          /Mintpad__InvalidParams\("insufficient balance"\)/
+        );
       });
     }); // refundHUNT
+
+    describe("setDayCounter", function () {
+      it("should allow owner to set day counter", async function () {
+        await mintpad.write.setDayCounter([10], { account: owner.account });
+
+        const dayCounter = await mintpad.read.dayCounter();
+        assert.equal(dayCounter, 10n);
+      });
+
+      it("should revert when non-owner tries to set day counter", async function () {
+        await assert.rejects(
+          mintpad.write.setDayCounter([10], { account: alice.account }),
+          /OwnableUnauthorizedAccount/
+        );
+      });
+    }); // setDayCounter
   }); // Admin functions
 
-  describe("Mint function", function () {
+  describe("Vote function", function () {
+    // Helper to set up a day with voting points
+    async function setupDay(alicePoints = 1000, bobPoints = 500) {
+      await mintpad.write.startRollOver({ account: owner.account });
+      const users = [alice.account.address, bob.account.address];
+      const points = [alicePoints, bobPoints];
+      await mintpad.write.setVotingPoints([users, points], { account: owner.account });
+      await mintpad.write.endRollOver([10000], { account: owner.account }); // 10000 HUNT reward
+    }
+
     describe("Parameter validation", function () {
-      it("should revert with invalid 'token' address (zero address)", async function () {
-        const signature = await signMessage(
-          alice.account.address,
-          ZERO_ADDRESS,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
+      beforeEach(async function () {
+        await setupDay();
+      });
 
+      it("should revert with invalid token address (zero address)", async function () {
         await assert.rejects(
-          mintpad.write.mintWithHunt([ZERO_ADDRESS, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
-            account: alice.account
-          }),
-          /Mintpad__InvalidParams\("token"\)/
+          mintpad.write.vote([ZERO_ADDRESS, 100], { account: alice.account }),
+          /Mintpad__InvalidParams\("zero address"\)/
         );
       });
 
-      it("should revert with zero tokensToMint", async function () {
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          0n,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-
+      it("should revert with non-existent token", async function () {
+        const nonExistentToken = "0x0000000000000000000000000000000000000001";
         await assert.rejects(
-          mintpad.write.mintWithHunt([TEST_TOKEN, 0n, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
-            account: alice.account
-          }),
-          /Mintpad__InvalidParams\("tokensToMint"\)/
+          mintpad.write.vote([nonExistentToken, 100], { account: alice.account }),
+          /Mintpad__InvalidParams\("not child token"\)/
         );
       });
 
-      it("should revert with zero maxHuntAmount", async function () {
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          0n,
-          DEFAULT_DONATION_BP,
-          0
-        );
-
+      it("should revert with zero voteAmount", async function () {
         await assert.rejects(
-          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, 0n, DEFAULT_DONATION_BP, signature], {
-            account: alice.account
-          }),
-          /Mintpad__InvalidParams\("maxHuntAmount"\)/
+          mintpad.write.vote([TEST_TOKEN, 0], { account: alice.account }),
+          /Mintpad__InvalidParams\("voteAmount"\)/
         );
       });
 
-      it("should revert when maxHuntAmount exceeds MAX_MP_PER_MINT", async function () {
-        const excessiveAmount = DEFAULT_MAX_HUNT_PER_MINT + 1n;
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          excessiveAmount,
-          DEFAULT_DONATION_BP,
-          0
-        );
-
+      it("should revert when user has insufficient voting points", async function () {
         await assert.rejects(
-          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, excessiveAmount, DEFAULT_DONATION_BP, signature], {
-            account: alice.account
-          }),
-          /Mintpad__InvalidParams\("maxHuntAmount"\)/
+          mintpad.write.vote([TEST_TOKEN, 1001], { account: alice.account }), // Alice has 1000 points
+          /Mintpad__InsufficientVotingPoints/
         );
       });
 
-      it("should revert when contract doesn't have enough HUNT balance", async function () {
-        // First, drain most of the HUNT balance by setting a very low balance
-        const huntToken = getContract({
-          address: HUNT_TOKEN,
-          abi: erc20Abi,
-          client: deployer
-        });
-
-        // Transfer most HUNT out to leave insufficient balance
-        // const currentBalance = await huntToken.read.balanceOf([mintpad.address]);
-        // const amountToTransfer = currentBalance - 100n; // Leave only 100 wei
-
-        await mintpad.write.refundHUNT({ account: signerAccount });
-
-        // Try to mint with more than available balance
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
+      it("should revert when voting during roll-over", async function () {
+        await mintpad.write.startRollOver({ account: owner.account });
 
         await assert.rejects(
-          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
-            account: alice.account
-          }),
-          /Mintpad__NotEnoughHuntBalance\(\)/
+          mintpad.write.vote([TEST_TOKEN, 100], { account: alice.account }),
+          /Mintpad__RollOverInProgress/
         );
       });
     }); // Parameter validation
 
-    describe("Signature validation", function () {
-      it("should revert with invalid signature", async function () {
-        const invalidSignature =
-          "0x1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
-
-        await assert.rejects(
-          mintpad.write.mintWithHunt(
-            [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, invalidSignature],
-            {
-              account: alice.account
-            }
-          ),
-          (error: any) => error.message.includes("ECDSAInvalidSignature")
-        );
-      });
-
-      it("should revert when signature is from wrong signer", async function () {
-        const wrongSignerPrivateKey = "0x9876543210987654321098765432109876543210987654321098765432109876";
-        const wrongSignerAccount = privateKeyToAccount(wrongSignerPrivateKey);
-
-        const messageHash = getMessageHash(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-
-        const wrongSignature = await wrongSignerAccount.signMessage({
-          message: { raw: messageHash }
-        });
-
-        await assert.rejects(
-          mintpad.write.mintWithHunt(
-            [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, wrongSignature],
-            {
-              account: alice.account
-            }
-          ),
-          (error: any) => error.message.includes("Mintpad__InvalidSignature")
-        );
-      });
-
-      it("should revert when signature uses wrong nonce", async function () {
-        const wrongNonce = 5;
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          wrongNonce
-        );
-
-        await assert.rejects(
-          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
-            account: alice.account
-          }),
-          (error: any) => error.message.includes("Mintpad__InvalidSignature")
-        );
-      });
-    }); // Signature validation
-
     describe("Success cases", function () {
-      it("should increment user nonce after successful mint", async function () {
-        const initialNonce = await mintpad.read.userNonce([alice.account.address]);
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          initialNonce
-        );
+      beforeEach(async function () {
+        await setupDay();
+      });
+      it("should allow user to vote with available points", async function () {
+        const voteAmount = 500;
+        const dayCounter = await mintpad.read.dayCounter();
 
-        // Get initial token balances
-        const testToken = getContract({
-          address: TEST_TOKEN,
-          abi: erc20Abi,
-          client: deployer
-        }) as any;
-        const initialAliceBalance = await testToken.read.balanceOf([alice.account.address]);
+        await mintpad.write.vote([TEST_TOKEN, voteAmount], { account: alice.account });
 
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature],
-          {
-            account: alice.account
-          }
-        );
+        const userVotingPointSpent = await mintpad.read.dailyUserVotingPointSpent([dayCounter, alice.account.address]);
+        const userTokenVotes = await mintpad.read.dailyUserTokenVotes([dayCounter, alice.account.address, TEST_TOKEN]);
+        const stats = await mintpad.read.dailyStats([dayCounter]);
 
-        // Check that nonce was incremented
-        const newNonce = await mintpad.read.userNonce([alice.account.address]);
-        assert.equal(newNonce, initialNonce + 1);
-
-        // Check that tokens were minted and transferred to Alice
-        const finalAliceBalance = await testToken.read.balanceOf([alice.account.address]);
-        assert.equal(finalAliceBalance, initialAliceBalance + TOKENS_TO_MINT);
+        assert.equal(userVotingPointSpent, voteAmount);
+        assert.equal(userTokenVotes, voteAmount);
+        assert.equal(stats[1], voteAmount); // totalVotingPointSpent
       });
 
-      it("should emit Minted event on successful mint", async function () {
-        const initialNonce = await mintpad.read.userNonce([alice.account.address]);
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          initialNonce
-        );
+      it("should allow multiple votes from same user", async function () {
+        const voteAmount1 = 300;
+        const voteAmount2 = 400;
+        const dayCounter = await mintpad.read.dayCounter();
 
-        const timestamp = await time.latest();
+        await mintpad.write.vote([TEST_TOKEN, voteAmount1], { account: alice.account });
+        await mintpad.write.vote([TEST_TOKEN, voteAmount2], { account: alice.account });
+
+        const userVotingPointSpent = await mintpad.read.dailyUserVotingPointSpent([dayCounter, alice.account.address]);
+        const userTokenVotes = await mintpad.read.dailyUserTokenVotes([dayCounter, alice.account.address, TEST_TOKEN]);
+
+        assert.equal(userVotingPointSpent, voteAmount1 + voteAmount2);
+        assert.equal(userTokenVotes, voteAmount1 + voteAmount2);
+      });
+
+      it("should emit Voted event on successful vote", async function () {
+        const voteAmount = 500;
+        const dayCounter = await mintpad.read.dayCounter();
 
         await viem.assertions.emitWithArgs(
-          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature], {
-            account: alice.account
-          }),
+          mintpad.write.vote([TEST_TOKEN, voteAmount], { account: alice.account }),
           mintpad,
-          "Minted",
-          [
-            getAddress(alice.account.address),
-            MAX_HUNT_AMOUNT,
-            getAddress(TEST_TOKEN),
-            timestamp + 1,
-            TOKENS_TO_MINT,
-            0n
-          ]
+          "Voted",
+          [dayCounter, getAddress(alice.account.address), getAddress(TEST_TOKEN), voteAmount]
         );
       });
-      it("should revert with invalid donationBp (> 10000)", async function () {
-        const invalidDonationBp = 10001;
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          invalidDonationBp,
-          0
+
+      it("should track votes from multiple users", async function () {
+        const aliceVote = 500;
+        const bobVote = 300;
+        const dayCounter = await mintpad.read.dayCounter();
+
+        await mintpad.write.vote([TEST_TOKEN, aliceVote], { account: alice.account });
+        await mintpad.write.vote([TEST_TOKEN, bobVote], { account: bob.account });
+
+        const aliceTokenVotes = await mintpad.read.dailyUserTokenVotes([dayCounter, alice.account.address, TEST_TOKEN]);
+        const bobTokenVotes = await mintpad.read.dailyUserTokenVotes([dayCounter, bob.account.address, TEST_TOKEN]);
+        const stats = await mintpad.read.dailyStats([dayCounter]);
+
+        assert.equal(aliceTokenVotes, aliceVote);
+        assert.equal(bobTokenVotes, bobVote);
+        assert.equal(stats[1], aliceVote + bobVote); // totalVotingPointSpent
+      });
+    }); // Success cases
+  }); // Vote function
+
+  describe("Claim function", function () {
+    const DAY_1_HUNT_REWARD = 1000;
+    const DAY_2_HUNT_REWARD = 2000;
+    const ALICE_VOTINGS = [800, 600];
+    const BOB_VOTINGS = [0, 400];
+    const DAILY_ALICE_REWARDS_EXPECTED = [1000n * 10n ** 18n, 1200n * 10n ** 18n];
+    const DAILY_BOB_REWARDS_EXPECTED = [0n, 800n * 10n ** 18n];
+
+    // Estimate how many tokens we can mint (approximated value on the forked block: 37720000)
+    const TOKEN_AMOUNT_WITH_2200_HUNT = 4100n * 10n ** 18n; // 4100 SIGNET tokens
+    const TOKEN_AMOUNT_WITH_800_HUNT = 1530n * 10n ** 18n; // 1530 SIGNET tokens
+
+    // Helper to set up multiple days with voting
+    async function setupMultipleDays() {
+      // Day 1
+      await mintpad.write.startRollOver({ account: owner.account });
+      await mintpad.write.setVotingPoints(
+        [
+          [alice.account.address, bob.account.address],
+          [1000, 500]
+        ],
+        {
+          account: owner.account
+        }
+      );
+      await mintpad.write.endRollOver([DAY_1_HUNT_REWARD], { account: owner.account });
+
+      // Alice votes 800 points on Day 1
+      await mintpad.write.vote([TEST_TOKEN, ALICE_VOTINGS[0]], { account: alice.account });
+
+      // Day 2
+      await mintpad.write.startRollOver({ account: owner.account });
+      await mintpad.write.setVotingPoints(
+        [
+          [alice.account.address, bob.account.address],
+          [1000, 500]
+        ],
+        {
+          account: owner.account
+        }
+      );
+      await mintpad.write.endRollOver([DAY_2_HUNT_REWARD], { account: owner.account });
+
+      // Alice votes 600 points, Bob votes 400 points on Day 2
+      await mintpad.write.vote([TEST_TOKEN, ALICE_VOTINGS[1]], { account: alice.account });
+      await mintpad.write.vote([TEST_TOKEN, BOB_VOTINGS[1]], { account: bob.account });
+
+      // Day 3 (current day, no claims yet)
+      await mintpad.write.startRollOver({ account: owner.account });
+      await mintpad.write.setVotingPoints(
+        [
+          [alice.account.address, bob.account.address],
+          [1000, 500]
+        ],
+        {
+          account: owner.account
+        }
+      );
+      await mintpad.write.endRollOver([1234], { account: owner.account });
+    }
+
+    describe("Parameter validation", function () {
+      beforeEach(async function () {
+        await setupMultipleDays();
+      });
+
+      it("should revert with invalid token address (zero address)", async function () {
+        await assert.rejects(
+          mintpad.write.claim([ZERO_ADDRESS, 100n * 10n ** 18n, 0], { account: alice.account }),
+          /Mintpad__InvalidParams\("zero address"\)/
         );
+      });
+
+      it("should revert with non-existent token", async function () {
+        const nonExistentToken = "0x0000000000000000000000000000000000000001";
+        await assert.rejects(
+          mintpad.write.claim([nonExistentToken, 100n * 10n ** 18n, 0], { account: alice.account }),
+          /Mintpad__InvalidParams\("not child token"\)/
+        );
+      });
+
+      it("should revert with zero tokensToMint", async function () {
+        await assert.rejects(
+          mintpad.write.claim([TEST_TOKEN, 0n, 0], { account: alice.account }),
+          /Mintpad__InvalidParams\("tokensToMint must be greater than 0"\)/
+        );
+      });
+
+      it("should revert when claiming during roll-over", async function () {
+        await mintpad.write.startRollOver({ account: owner.account });
 
         await assert.rejects(
-          mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, invalidDonationBp, signature], {
-            account: alice.account
-          }),
-          /Mintpad__InvalidParams\("donationBp"\)/
+          mintpad.write.claim([TEST_TOKEN, 100n * 10n ** 18n, 0], { account: alice.account }),
+          /Mintpad__RollOverInProgress/
         );
       });
 
-      it("should handle donation correctly when donationBp > 0", async function () {
-        const donationBp = 1000; // 10% donation
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          donationBp,
-          0
+      it("should revert when user has nothing to claim", async function () {
+        // Bob never voted for TEST_TOKEN on Day 1
+        await mintpad.write.setDayCounter([1], { account: owner.account });
+
+        await assert.rejects(
+          mintpad.write.claim([TEST_TOKEN, 100n * 10n ** 18n, 0], { account: bob.account }),
+          /Mintpad__NothingToClaim/
         );
+      });
+    }); // Parameter validation
 
-        const initialNonce = await mintpad.read.userNonce([alice.account.address]);
+    describe("Success cases", function () {
+      beforeEach(async function () {
+        await setupMultipleDays();
+      });
 
-        // Get token contract and creator address
-        const testToken = getContract({
-          address: TEST_TOKEN,
-          abi: erc20Abi,
-          client: deployer
-        }) as any;
+      it("should allow alice to claim rewards", async function () {
+        // Alice can claim rewards from Day 1 and Day 2 = 2200 HUNT
+        const [claimableHunt, endDay] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+
+        assert.equal(claimableHunt, DAILY_ALICE_REWARDS_EXPECTED[0] + DAILY_ALICE_REWARDS_EXPECTED[1]);
+        assert.equal(endDay, 2n); // Can claim up to Day 2 (Day 3 is current)
+
+        const initialAliceBalance = await testToken.read.balanceOf([alice.account.address]);
+
+        await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account });
+
+        const finalAliceBalance = await testToken.read.balanceOf([alice.account.address]);
+        assert.equal(finalAliceBalance, initialAliceBalance + TOKEN_AMOUNT_WITH_2200_HUNT);
+
+        // Check that lastClaimDay was updated
+        const lastClaimDay = await mintpad.read.userTokenLastClaimDay([alice.account.address, TEST_TOKEN]);
+        assert.equal(lastClaimDay, 2n);
+      });
+
+      it("should allow bob to claim rewards", async function () {
+        // Bob can claim rewards from Day 2 = 800 HUNT
+        const [claimableHunt, endDay] = await mintpad.read.getClaimableHunt([bob.account.address, TEST_TOKEN]);
+
+        assert.equal(claimableHunt, DAILY_BOB_REWARDS_EXPECTED[1]);
+        assert.equal(endDay, 2n); // Can claim up to Day 2 (Day 3 is current)
+
+        const initialBobBalance = await testToken.read.balanceOf([bob.account.address]);
+
+        await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_800_HUNT, 0], { account: bob.account });
+
+        const finalBobBalance = await testToken.read.balanceOf([bob.account.address]);
+        assert.equal(finalBobBalance, initialBobBalance + TOKEN_AMOUNT_WITH_800_HUNT);
+
+        // Check that lastClaimDay was updated
+        const lastClaimDay = await mintpad.read.userTokenLastClaimDay([bob.account.address, TEST_TOKEN]);
+        assert.equal(lastClaimDay, 2n);
+      });
+
+      it("should emit Claimed event", async function () {
+        const tx = mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account });
+
+        // Just check that it emits the event with correct user and token
+        await viem.assertions.emit(tx, mintpad, "Claimed");
+      });
+
+      it("should handle donations correctly", async function () {
+        const donationBp = 1000n; // 10% donation
+
         const bondContract = getContract({
           address: BOND_ADDRESS,
           abi: [
@@ -491,487 +560,94 @@ describe("Mintpad", async function () {
               ]
             }
           ],
-          client: deployer
+          client: owner
         }) as any;
 
         const [tokenCreator] = await bondContract.read.tokenBond([TEST_TOKEN]);
 
-        // Get initial balances
-        const initialAliceBalance = await testToken.read.balanceOf([alice.account.address]);
-        const initialCreatorBalance = await testToken.read.balanceOf([tokenCreator]);
+        const initialAliceBalance = BigInt(await testToken.read.balanceOf([alice.account.address]));
+        const initialCreatorBalance = BigInt(await testToken.read.balanceOf([tokenCreator]));
 
-        await mintpad.write.mintWithHunt([TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, donationBp, signature], {
+        await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, Number(donationBp)], {
           account: alice.account
         });
 
-        // Check that nonce was incremented
-        const newNonce = await mintpad.read.userNonce([alice.account.address]);
-        assert.equal(newNonce, initialNonce + 1);
+        const finalAliceBalance = BigInt(await testToken.read.balanceOf([alice.account.address]));
+        const finalCreatorBalance = BigInt(await testToken.read.balanceOf([tokenCreator]));
 
-        // Calculate expected amounts
-        const expectedDonation = (TOKENS_TO_MINT * BigInt(donationBp)) / 10000n;
-        const expectedAliceTokens = TOKENS_TO_MINT - expectedDonation;
-
-        // Check that tokens were distributed correctly
-        const finalAliceBalance = await testToken.read.balanceOf([alice.account.address]);
-        const finalCreatorBalance = await testToken.read.balanceOf([tokenCreator]);
-
-        assert.equal(finalAliceBalance, initialAliceBalance + expectedAliceTokens);
-        assert.equal(finalCreatorBalance, initialCreatorBalance + expectedDonation);
-
-        // Check mint history includes donation info
-        const history = await mintpad.read.getMintHistory([0, 0]);
-        assert.equal(history.length, 1);
-        assert.equal(history[0].totalTokensMinted, TOKENS_TO_MINT);
-        assert.equal(history[0].tokensDonated, expectedDonation);
+        // Check that donation was sent to creator
+        assert.equal(finalCreatorBalance, initialCreatorBalance + (TOKEN_AMOUNT_WITH_2200_HUNT * donationBp) / 10000n);
+        assert.equal(
+          finalAliceBalance,
+          initialAliceBalance + TOKEN_AMOUNT_WITH_2200_HUNT - (TOKEN_AMOUNT_WITH_2200_HUNT * donationBp) / 10000n
+        );
       });
 
-      it("should mint tokens correctly with zero donation", async function () {
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP, // 0% donation
-          0
+      it("should prevent double claiming", async function () {
+        // First claim
+        await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account });
+
+        // Second claim should fail (nothing to claim)
+        await assert.rejects(
+          mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account }),
+          /Mintpad__NothingToClaim/
         );
-
-        // Get token contract
-        const testToken = getContract({
-          address: TEST_TOKEN,
-          abi: erc20Abi,
-          client: deployer
-        }) as any;
-
-        // Get initial balance
-        const initialAliceBalance = await testToken.read.balanceOf([alice.account.address]);
-
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature],
-          {
-            account: alice.account
-          }
-        );
-
-        // Check that all tokens went to Alice (no donation)
-        const finalAliceBalance = await testToken.read.balanceOf([alice.account.address]);
-        assert.equal(finalAliceBalance, initialAliceBalance + TOKENS_TO_MINT);
-
-        // Check mint history shows zero donation
-        const history = await mintpad.read.getMintHistory([0, 0]);
-        assert.equal(history.length, 1);
-        assert.equal(history[0].totalTokensMinted, TOKENS_TO_MINT);
-        assert.equal(history[0].tokensDonated, 0n);
       });
     }); // Success cases
-  }); // Mint function
 
-  describe("View functions", function () {
-    describe("getMessageHash", function () {
-      it("should return consistent hash for same parameters", async function () {
-        const hash1 = await mintpad.read.getMessageHash([
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP
-        ]);
-        const hash2 = await mintpad.read.getMessageHash([
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP
-        ]);
+    describe("View functions", function () {
+      describe("getClaimableHunt", function () {
+        it("should return 0 when no votes exist", async function () {
+          const [claimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+          assert.equal(claimableHunt, 0n);
+        });
 
-        assert.equal(hash1, hash2);
-      });
+        it("should calculate claimable HUNT correctly", async function () {
+          await setupMultipleDays();
 
-      it("should return different hash for different parameters", async function () {
-        const hash1 = await mintpad.read.getMessageHash([
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP
-        ]);
-        const hash2 = await mintpad.read.getMessageHash([
-          deployer.account.address, // Different address
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP
-        ]);
+          const [claimableHunt, endDay] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
 
-        assert.notEqual(hash1, hash2);
-      });
+          assert.equal(claimableHunt, DAILY_ALICE_REWARDS_EXPECTED[0] + DAILY_ALICE_REWARDS_EXPECTED[1]);
+          assert.equal(endDay, 2n); // Can claim up to Day 2
+        });
 
-      it("should return different hash after nonce increment", async function () {
-        const hashBeforeMint = await mintpad.read.getMessageHash([
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP
-        ]);
+        it("should handle multiple users correctly", async function () {
+          await setupMultipleDays();
 
-        // Perform a mint to increment nonce
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature],
-          {
-            account: alice.account
-          }
-        );
+          const [aliceClaimable] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+          const [bobClaimable] = await mintpad.read.getClaimableHunt([bob.account.address, TEST_TOKEN]);
 
-        const hashAfterMint = await mintpad.read.getMessageHash([
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP
-        ]);
+          assert.equal(aliceClaimable, DAILY_ALICE_REWARDS_EXPECTED[0] + DAILY_ALICE_REWARDS_EXPECTED[1]);
+          assert.equal(bobClaimable, DAILY_BOB_REWARDS_EXPECTED[1]);
+        });
 
-        assert.notEqual(hashBeforeMint, hashAfterMint);
-      });
-    }); // getMessageHash
+        it("should return 0 after claim", async function () {
+          await setupMultipleDays();
 
-    describe("getMintHistoryCount", function () {
-      it("should return zero count initially", async function () {
-        const totalCount = await mintpad.read.getMintHistoryCount();
-        assert.equal(totalCount, 0n);
-      });
+          await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account });
 
-      it("should increment count after successful mint", async function () {
-        // Perform first mint for Alice
-        const signature1 = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature1],
-          {
-            account: alice.account
-          }
-        );
+          const [claimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+          assert.equal(claimableHunt, 0n);
+        });
 
-        let totalCount = await mintpad.read.getMintHistoryCount();
-        assert.equal(totalCount, 1n);
+        it("should handle vote expiration (30 days)", async function () {
+          await setupMultipleDays();
 
-        // Perform second mint for Alice
-        const signature2 = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT / 2n,
-          MAX_HUNT_AMOUNT / 2n,
-          DEFAULT_DONATION_BP,
-          1
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT / 2n, MAX_HUNT_AMOUNT / 2n, DEFAULT_DONATION_BP, signature2],
-          {
-            account: alice.account
-          }
-        );
+          // Set day counter to 32 (so votes before day 2 are expired)
+          await mintpad.write.setDayCounter([32], { account: owner.account });
+          const [claimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
 
-        totalCount = await mintpad.read.getMintHistoryCount();
-        assert.equal(totalCount, 2n);
+          // Only Day 2 vote should be claimable (Day 1 is > 30 days ago)
+          assert.equal(claimableHunt, DAILY_ALICE_REWARDS_EXPECTED[1]);
 
-        // Perform mint for deployer
-        const signature3 = await signMessage(
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature3],
-          {
-            account: deployer.account
-          }
-        );
+          // Set day counter to 33 (so votes before day 3 are expired)
+          await mintpad.write.setDayCounter([33], { account: owner.account });
+          const [claimableHunt1] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
 
-        totalCount = await mintpad.read.getMintHistoryCount();
-        assert.equal(totalCount, 3n);
-      });
-    }); // getMintHistoryCount
-
-    describe("getMintHistory", function () {
-      beforeEach(async function () {
-        // Setup some mint history for testing
-        const signature1 = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature1],
-          {
-            account: alice.account
-          }
-        );
-
-        const signature2 = await signMessage(
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT / 2n,
-          MAX_HUNT_AMOUNT / 2n,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT / 2n, MAX_HUNT_AMOUNT / 2n, DEFAULT_DONATION_BP, signature2],
-          {
-            account: deployer.account
-          }
-        );
-
-        const signature3 = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT * 2n,
-          MAX_HUNT_AMOUNT * 2n,
-          DEFAULT_DONATION_BP,
-          1
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT * 2n, MAX_HUNT_AMOUNT * 2n, DEFAULT_DONATION_BP, signature3],
-          {
-            account: alice.account
-          }
-        );
-      });
-
-      it("should revert when startIndex > endIndex", async function () {
-        await assert.rejects(mintpad.read.getMintHistory([5, 3]), /Mintpad__InvalidParams\("startIndex > endIndex"\)/);
-      });
-
-      it("should return single history entry", async function () {
-        const history = await mintpad.read.getMintHistory([0, 0]);
-
-        assert.equal(history.length, 1);
-        assert.equal(history[0].user.toLowerCase(), alice.account.address.toLowerCase());
-        assert.equal(history[0].token.toLowerCase(), TEST_TOKEN.toLowerCase());
-        assert.equal(history[0].totalTokensMinted, TOKENS_TO_MINT);
-        assert.equal(history[0].tokensDonated, 0n);
-      });
-
-      it("should return multiple history entries", async function () {
-        const history = await mintpad.read.getMintHistory([0, 2]);
-
-        assert.equal(history.length, 3);
-
-        // First entry (Alice's first mint)
-        assert.equal(history[0].user.toLowerCase(), alice.account.address.toLowerCase());
-        assert.equal(history[0].totalTokensMinted, TOKENS_TO_MINT);
-        assert.equal(history[0].tokensDonated, 0n);
-
-        // Second entry (Deployer's mint)
-        assert.equal(history[1].user.toLowerCase(), deployer.account.address.toLowerCase());
-        assert.equal(history[1].totalTokensMinted, TOKENS_TO_MINT / 2n);
-        assert.equal(history[1].tokensDonated, 0n);
-
-        // Third entry (Alice's second mint)
-        assert.equal(history[2].user.toLowerCase(), alice.account.address.toLowerCase());
-        assert.equal(history[2].totalTokensMinted, TOKENS_TO_MINT * 2n);
-        assert.equal(history[2].tokensDonated, 0n);
-      });
-
-      it("should handle endIndex beyond array length", async function () {
-        const history = await mintpad.read.getMintHistory([0, 100]); // endIndex way beyond actual length
-
-        assert.equal(history.length, 3); // Should return all 3 entries
-        assert.equal(history[0].user.toLowerCase(), alice.account.address.toLowerCase());
-        assert.equal(history[1].user.toLowerCase(), deployer.account.address.toLowerCase());
-        assert.equal(history[2].user.toLowerCase(), alice.account.address.toLowerCase());
-      });
-
-      it("should return partial range correctly", async function () {
-        const history = await mintpad.read.getMintHistory([1, 2]);
-
-        assert.equal(history.length, 2);
-        assert.equal(history[0].user.toLowerCase(), deployer.account.address.toLowerCase());
-        assert.equal(history[1].user.toLowerCase(), alice.account.address.toLowerCase());
-        assert.equal(history[1].totalTokensMinted, TOKENS_TO_MINT * 2n);
-        assert.equal(history[1].tokensDonated, 0n);
-      });
-    }); // getMintHistory
-
-    describe("get24hAgoHistoryIndex", function () {
-      it("should return 0 when no history exists", async function () {
-        const index = await mintpad.read.get24hAgoHistoryIndex();
-        assert.equal(index, 0n);
-      });
-
-      it("should return 0 when all history is within 24 hours", async function () {
-        // Add some recent history
-        const signature = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature],
-          {
-            account: alice.account
-          }
-        );
-
-        const index = await mintpad.read.get24hAgoHistoryIndex();
-        assert.equal(index, 0n);
-      });
-
-      it("should return correct index when history spans more than 24 hours", async function () {
-        // First, add some history
-        const signature1 = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature1],
-          {
-            account: alice.account
-          }
-        );
-
-        const signature2 = await signMessage(
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt([
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          signature2
-        ]);
-
-        // Advance time by more than 24 hours
-        await time.increase(86401); // 24 hours + 1 second
-
-        // Add more history after time advancement
-        const signature3 = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          1
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature3],
-          {
-            account: alice.account
-          }
-        );
-
-        const index = await mintpad.read.get24hAgoHistoryIndex();
-        assert.equal(index, 2n); // Should return index 2 (the first entry after 24h ago)
-      });
-
-      it("should return correct index with multiple old entries", async function () {
-        // Add multiple entries
-        const signature1 = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature1],
-          {
-            account: alice.account
-          }
-        );
-
-        const signature2 = await signMessage(
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          0
-        );
-        await mintpad.write.mintWithHunt([
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          signature2
-        ]);
-
-        // Advance time by 12 hours
-        await time.increase(43200);
-
-        const signature3 = await signMessage(
-          alice.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          1
-        );
-        await mintpad.write.mintWithHunt(
-          [TEST_TOKEN, TOKENS_TO_MINT, MAX_HUNT_AMOUNT, DEFAULT_DONATION_BP, signature3],
-          {
-            account: alice.account
-          }
-        );
-
-        // Advance time by another 13 hours (total 25 hours from first entries)
-        await time.increase(46800);
-
-        const signature4 = await signMessage(
-          deployer.account.address,
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          1
-        );
-        await mintpad.write.mintWithHunt([
-          TEST_TOKEN,
-          TOKENS_TO_MINT,
-          MAX_HUNT_AMOUNT,
-          DEFAULT_DONATION_BP,
-          signature4
-        ]);
-
-        const index = await mintpad.read.get24hAgoHistoryIndex();
-        // Should return index pointing to first entry that's within 24 hours
-        // Entry 0,1: > 24h ago, Entry 2: ~13h ago, Entry 3: recent
-        // So index should be 2
-        assert.equal(index, 2n);
-      });
-    }); // get24hAgoHistoryIndex
-  }); // View functions
+          // All expired
+          assert.equal(claimableHunt1, 0n);
+        });
+      }); // getClaimableHunt
+    }); // View functions
+  }); // Claim function
 }); // Mintpad

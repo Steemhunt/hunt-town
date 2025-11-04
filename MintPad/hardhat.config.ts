@@ -16,7 +16,7 @@ const config: HardhatUserConfig = {
         settings: {
           optimizer: {
             enabled: true,
-            runs: 200
+            runs: 20000
           }
         }
       }
@@ -27,8 +27,9 @@ const config: HardhatUserConfig = {
       type: "edr-simulated",
       forking: {
         url: process.env.RPC_BASE!,
-        blockNumber: 36171000
-      }
+        blockNumber: 37720000 // 2025-11-04 13:09:07 KST
+      },
+      initialBaseFeePerGas: 1000000 // 1 gwei - low enough for tests
     },
     hardhatMainnet: {
       type: "edr-simulated",
@@ -42,14 +43,7 @@ const config: HardhatUserConfig = {
       type: "http",
       chainType: "l1",
       url: process.env.RPC_BASE!,
-      // accounts: [configVariable("BASE_PRIVATE_KEY")]
-      accounts: [configVariable("BASE_TEST_PRIVATE_KEY")]
-    },
-    sepolia: {
-      type: "http",
-      chainType: "l1",
-      url: configVariable("SEPOLIA_RPC_URL"),
-      accounts: [configVariable("SEPOLIA_PRIVATE_KEY")]
+      accounts: [configVariable("MINTPAD_TEST_DEPLOYER")]
     }
   },
   verify: {

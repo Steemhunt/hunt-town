@@ -1,177 +1,320 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.30;
 
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-contract Mintpad {
+contract Mintpad is Ownable {
+    // MARK: - Errors
     error Mintpad__InvalidParams(string param);
-    error Mintpad__NotEnoughHuntBalance();
-    error Mintpad__InvalidSignature();
-    error Mintpad__PermissionDenied();
+    error Mintpad__RollOverInProgress();
+    error Mintpad__RollOverNotInProgress();
+    error Mintpad__InsufficientVotingPoints();
+    error Mintpad__NothingToClaim();
+    error Mintpad__TooMuchLeftOver(uint256 actualHuntSpent);
 
+    // MARK: - Constants
     IERC20 private constant HUNT = IERC20(0x37f0c2915CeCC7e977183B8543Fc0864d03E064C);
-    address public immutable SIGNER;
     IMCV2_Bond public immutable BOND;
-    uint256 public MAX_MP_PER_MINT = 2000 ether; // 2000 HUNT per mint
 
-    struct MintHistory {
-        address user; // slot 0
-        uint88 huntAmount; // slot 0
-        uint40 timestamp; // slot 1
-        address token; // slot 1
-        uint128 totalTokensMinted; // slot 2
-        uint128 tokensDonated; // slot 2
+    // MARK: - State Variables
+    uint256 public constant VOTE_EXPIRATION_DAYS = 30;
+    uint256 public dayCounter;
+    bool public isRollOverInProgress;
+
+    // [day][user] => voting point (Set by Owner daily)
+    mapping(uint256 => mapping(address => uint32)) public dailyUserVotingPoint;
+
+    // [day] => DailyStats
+    struct DailyStats {
+        uint32 totalVotingPointGiven; // Total voting points allotted for the day
+        uint32 totalVotingPointSpent; // Total voting points spent for the day
+        uint24 totalHuntReward; // Total HUNT reward for the day (in Ether)
+        uint80 totalHuntClaimed; // Total HUNT claimed for the day (in Wei)
+        uint24 votingCount; // Number of votes for the day
+        uint24 claimCount; // Number of claims for the day
     }
-    MintHistory[] public mintHistory;
-    mapping(address => uint40) public userNonce;
+    mapping(uint256 => DailyStats) public dailyStats;
 
-    event Minted(
+    // [day][user] => Total voting points spent by the user on that day
+    mapping(uint256 => mapping(address => uint32)) public dailyUserVotingPointSpent;
+
+    // [day][user][token] => Voting points spent by the user on a specific token on that day
+    mapping(uint256 => mapping(address => mapping(address => uint32))) public dailyUserTokenVotes;
+
+    // [user][token] => The last day the user claimed rewards for this token
+    mapping(address => mapping(address => uint256)) public userTokenLastClaimDay;
+
+    // MARK: - Events
+    event VotingPointsUpdated(uint256 indexed day, uint256 updateCount, uint32 indexed pointAdded);
+    event Voted(uint256 indexed day, address indexed user, address indexed token, uint32 voteAmount);
+    event Claimed(
         address indexed user,
-        uint88 huntAmount,
         address indexed token,
-        uint40 timestamp,
-        uint128 totalTokensMinted,
-        uint128 tokensDonated
+        uint256 dayClaimedUpTo,
+        uint256 actualHuntSpent,
+        uint256 tokensMinted,
+        uint256 indexed donationBp
     );
 
-    constructor(address signer, address bond) {
-        if (signer == address(0)) revert Mintpad__InvalidParams("signer");
+    // MARK: - Constructor
+    constructor(address bond) Ownable(msg.sender) {
         if (bond == address(0)) revert Mintpad__InvalidParams("bond");
 
-        SIGNER = signer;
         BOND = IMCV2_Bond(bond);
 
         // Pre-approve HUNT to Bond for minting
         HUNT.approve(bond, type(uint256).max);
     }
 
-    // MARK: - Admin functions
-
-    function setMaxHuntPerMint(uint256 maxHuntPerMint) external {
-        if (msg.sender != SIGNER) revert Mintpad__PermissionDenied();
-
-        MAX_MP_PER_MINT = maxHuntPerMint;
+    // MARK: - Modifiers
+    modifier _validChildToken(address token) {
+        if (token == address(0)) revert Mintpad__InvalidParams("zero address");
+        if (!BOND.exists(token)) revert Mintpad__InvalidParams("not child token");
+        _;
     }
 
-    function refundHUNT() external {
-        if (msg.sender != SIGNER) revert Mintpad__PermissionDenied();
-
-        HUNT.transfer(msg.sender, HUNT.balanceOf(address(this)));
+    modifier _whenNotRollingOver() {
+        if (isRollOverInProgress) revert Mintpad__RollOverInProgress();
+        _;
     }
 
-    // MARK: - Mint functions
+    modifier _whenRollingOver() {
+        if (!isRollOverInProgress) revert Mintpad__RollOverNotInProgress();
+        _;
+    }
 
-    function mintWithHunt(
+    // MARK: - Admin Functions
+    /**
+     * @dev Starts the roll-over process.
+     */
+    function startRollOver() external onlyOwner {
+        isRollOverInProgress = true;
+
+        ++dayCounter;
+    }
+
+    /**
+     * @dev Ends the roll-over process.
+     */
+    function endRollOver(uint24 totalHuntReward) external onlyOwner _whenRollingOver {
+        dailyStats[dayCounter].totalHuntReward = totalHuntReward; // Set to the totalHuntReward for the day
+
+        isRollOverInProgress = false;
+    }
+
+    /**
+     * @dev Sets the voting points for users for a specific day.
+     * @param users List of user addresses.
+     * @param votingPoints List of voting points for each user.
+     */
+    function setVotingPoints(
+        address[] calldata users,
+        uint32[] calldata votingPoints
+    ) external onlyOwner _whenRollingOver {
+        uint256 updateCount = users.length;
+        if (updateCount != votingPoints.length) revert Mintpad__InvalidParams("length mismatch");
+
+        uint256 day = dayCounter;
+        uint32 totalPointAdded = 0;
+        for (uint256 i = 0; i < updateCount; ++i) {
+            dailyUserVotingPoint[day][users[i]] = votingPoints[i];
+            totalPointAdded += votingPoints[i];
+        }
+        dailyStats[day].totalVotingPointGiven += totalPointAdded;
+
+        emit VotingPointsUpdated(day, updateCount, totalPointAdded);
+    }
+
+    // MARK: - Admin Emergency Functions
+    /**
+     * @dev Sets the current day counter (for emergency troubleshooting only).
+     * @param day The day to set.
+     */
+    function setDayCounter(uint256 day) external onlyOwner {
+        dayCounter = day;
+    }
+
+    /**
+     * @dev Refunds HUNT tokens to the owner (for emergency troubleshooting only).
+     * @param amount The amount of HUNT to refund.
+     */
+    function refundHUNT(uint256 amount) external onlyOwner {
+        if (amount == 0) revert Mintpad__InvalidParams("amount cannot be zero");
+        if (amount > HUNT.balanceOf(address(this))) revert Mintpad__InvalidParams("insufficient balance");
+
+        HUNT.transfer(msg.sender, amount);
+    }
+
+    // MARK: - Write Functions (User)
+    /**
+     * @dev Votes for a specific token using allotted voting points.
+     * @param token The address of the child token to vote for.
+     * @param voteAmount The amount of voting points to spend.
+     */
+    function vote(address token, uint32 voteAmount) external _whenNotRollingOver _validChildToken(token) {
+        if (voteAmount == 0) revert Mintpad__InvalidParams("voteAmount");
+
+        address user = msg.sender;
+        uint256 day = dayCounter;
+
+        // 1. Check user's remaining voting points
+        uint32 totalAllottedPoints = dailyUserVotingPoint[day][user];
+        uint32 alreadySpentPoints = dailyUserVotingPointSpent[day][user];
+
+        if (alreadySpentPoints + voteAmount > totalAllottedPoints) {
+            revert Mintpad__InsufficientVotingPoints();
+        }
+
+        // 2. Update voting status (gas-efficient mapping updates)
+        dailyUserVotingPointSpent[day][user] = alreadySpentPoints + voteAmount;
+        dailyUserTokenVotes[day][user][token] += voteAmount;
+        dailyStats[day].totalVotingPointSpent += voteAmount;
+
+        emit Voted(day, user, token, voteAmount);
+    }
+
+    /**
+     * @dev Claims mintable HUNT rewards for a specific token.
+     * @param token The address of the child token to claim for.
+     * @param tokensToMint The minimum amount of tokens to mint, estimated by the client (accounts for slippage).
+     */
+    function claim(
         address token,
-        uint128 tokensToMint,
-        uint88 maxHuntAmount,
-        uint16 donationBp,
-        bytes calldata signature
-    ) external returns (uint88 huntAmount) {
-        if (token == address(0)) revert Mintpad__InvalidParams("token");
-        if (tokensToMint == 0) revert Mintpad__InvalidParams("tokensToMint");
-        if (maxHuntAmount == 0) revert Mintpad__InvalidParams("maxHuntAmount");
-        if (maxHuntAmount > MAX_MP_PER_MINT) revert Mintpad__InvalidParams("maxHuntAmount");
-        if (donationBp > 10000) revert Mintpad__InvalidParams("donationBp");
-        if (HUNT.balanceOf(address(this)) < maxHuntAmount) revert Mintpad__NotEnoughHuntBalance();
+        uint256 tokensToMint,
+        uint256 donationBp
+    ) external _whenNotRollingOver _validChildToken(token) {
+        if (tokensToMint == 0) revert Mintpad__InvalidParams("tokensToMint must be greater than 0");
 
-        address receiver = msg.sender;
+        address user = msg.sender;
 
-        // Verify the signature
-        bytes32 signedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            getMessageHash(receiver, token, tokensToMint, maxHuntAmount, donationBp)
-        );
+        // 1. Calculate claimable HUNT amount using the view function logic
+        (uint256 totalHuntToClaim, uint256 endDay) = _getClaimableHunt(user, token);
 
-        // Recover signer from signature
-        // ECDSA.recover can revert with ECDSAInvalidSignature() | ECDSAInvalidSignatureLength() | ECDSAInvalidSignatureS()
-        address signer = ECDSA.recover(signedMessageHash, signature);
-        if (signer != SIGNER) revert Mintpad__InvalidSignature();
+        if (totalHuntToClaim == 0) revert Mintpad__NothingToClaim();
 
-        // Mint and transfer tokens to the receiver and creator (donation)
-        // Could revert with MCV2_Bond__TokenNotFound() | MCV2_Bond__SlippageLimitExceeded()
-        // NOTE: Force cast to uint88 is safe here as maxHuntAmount is checked to be less than MAX_MP_PER_MINT
-        uint128 tokensToDonated;
+        // 2. Update the last claimed day (prevents re-entrancy/double-claim)
+        // This marks all rewards up to `endDay` as consumed.
+        userTokenLastClaimDay[user][token] = endDay;
+
+        // 3. Execute the mint via the BOND contract
+        // We use `tokensToMint` as the desired token amount, and `totalHuntToClaim` as the `maxReserveAmount` (slippage protection).
+        // The BOND.mint function will revert if the actual HUNT cost > totalHuntToClaim.
+        uint256 actualHuntSpent = BOND.mint(token, tokensToMint, totalHuntToClaim, address(this));
+
+        // NOTE: actualHuntSpent can be smaller than totalHuntToClaim if tokensToMint is capped below the mintable amount.
+        // To avoid leaving too much unspent, revert if the leftover exceeds 2% of totalHuntToClaim.
+        if (actualHuntSpent < (totalHuntToClaim * 98) / 100) {
+            revert Mintpad__TooMuchLeftOver(actualHuntSpent);
+        }
+
+        // 4. Handle donations to the token creator
+        IERC20 t = IERC20(token);
+        (address creator, , , , , ) = BOND.tokenBond(token);
         if (donationBp > 0) {
-            tokensToDonated = (tokensToMint * donationBp) / 10000;
-            (address donationReceiver, , , , , ) = BOND.tokenBond(token);
-
-            // NOTE: uint88 is guaranteed by totalSupply of HUNT token
-            huntAmount = uint88(BOND.mint(token, tokensToMint - tokensToDonated, maxHuntAmount, receiver));
-            huntAmount += uint88(BOND.mint(token, tokensToDonated, maxHuntAmount, donationReceiver));
+            uint256 donationAmount = (tokensToMint * donationBp) / 10000;
+            t.transfer(creator, donationAmount);
+            t.transfer(user, tokensToMint - donationAmount);
         } else {
-            huntAmount = uint88(BOND.mint(token, tokensToMint, maxHuntAmount, receiver));
+            t.transfer(user, tokensToMint);
         }
-        assert(huntAmount <= maxHuntAmount); // is guaranteed by the bond contract
 
-        MintHistory memory newHistory = MintHistory(
-            receiver,
-            huntAmount,
-            uint40(block.timestamp),
-            token,
-            tokensToMint,
-            tokensToDonated
-        );
-        mintHistory.push(newHistory);
-
-        userNonce[receiver] += 1;
-
-        emit Minted(receiver, huntAmount, token, uint40(block.timestamp), tokensToMint, tokensToDonated);
+        emit Claimed(user, token, endDay, actualHuntSpent, tokensToMint, donationBp);
     }
 
-    function getMessageHash(
+    // MARK: - View Functions
+
+    /**
+     * @dev Calculates the total claimable HUNT for a user and token, and the end day of the claim period.
+     * @param user The user's address.
+     * @param token The token's address.
+     * @return totalHuntToClaim The total HUNT amount claimable.
+     * @return endDay The last day included in this calculation (i.e., yesterday).
+     */
+    function getClaimableHunt(
         address user,
-        address token,
-        uint128 tokensToMint,
-        uint88 maxHuntAmount,
-        uint16 donationBp
-    ) public view returns (bytes32) {
-        uint256 nonce = userNonce[user];
-        return keccak256(abi.encode(user, token, tokensToMint, maxHuntAmount, donationBp, nonce));
+        address token
+    ) public view returns (uint256 totalHuntToClaim, uint256 endDay) {
+        return _getClaimableHunt(user, token);
     }
 
-    // MARK: - View functions
+    /**
+     * @dev Internal helper function to consolidate calculation logic.
+     * (This is what `claim` and `getClaimableHunt` both use)
+     * @notice This function is private and contains the core calculation logic.
+     * @return totalHuntToClaim The total HUNT amount claimable.
+     * @return endDay The last day included in this calculation (i.e., yesterday).
+     */
+    function _getClaimableHunt(
+        address user,
+        address token
+    ) private view returns (uint256 totalHuntToClaim, uint256 endDay) {
+        uint256 currentDay = dayCounter;
 
-    function getMintHistory(uint256 startIndex, uint256 endIndex) external view returns (MintHistory[] memory history) {
-        if (startIndex > endIndex) revert Mintpad__InvalidParams("startIndex > endIndex");
-        if (mintHistory.length == 0 || startIndex >= mintHistory.length) return new MintHistory[](0);
+        // 0. Cannot claim for the current day, only up to yesterday.
+        if (currentDay == 0) return (0, 0); // No days have passed
+        endDay = currentDay - 1;
 
-        endIndex = endIndex >= mintHistory.length ? mintHistory.length - 1 : endIndex;
+        // 1. Calculate the 30-day expiration floor
+        uint256 expiryFloorDay = (currentDay > VOTE_EXPIRATION_DAYS) ? currentDay - VOTE_EXPIRATION_DAYS : 0;
 
-        uint256 arrayLength = endIndex - startIndex + 1;
-        history = new MintHistory[](arrayLength);
+        // 2. Get the last day this user-token pair was claimed
+        uint256 lastClaimedDay = userTokenLastClaimDay[user][token]; // Direct storage read is cheaper internally
 
-        unchecked {
-            for (uint256 i = 0; i < arrayLength; ++i) {
-                history[i] = mintHistory[startIndex + i];
-            }
+        // 3. Determine the start day for calculation
+        // max(lastClaimedDay + 1, expiryFloorDay)
+        uint256 startDay;
+        if (lastClaimedDay != 0 && lastClaimedDay + 1 > expiryFloorDay) {
+            startDay = lastClaimedDay + 1;
+        } else {
+            startDay = expiryFloorDay;
         }
-    }
 
-    function getMintHistoryCount() external view returns (uint256) {
-        return mintHistory.length;
-    }
+        if (startDay > endDay) return (0, endDay); // Nothing to claim
 
-    function get24hAgoHistoryIndex() external view returns (uint256) {
-        uint256 length = mintHistory.length;
-        if (length == 0) return 0;
+        totalHuntToClaim = 0;
 
-        unchecked {
-            uint256 timeAt24hAgo = block.timestamp - 86400;
+        // 4. Loop (max 30 times) to calculate rewards
+        for (uint256 day = startDay; day <= endDay; ++day) {
+            uint256 userVotes = dailyUserTokenVotes[day][user][token];
+            if (userVotes == 0) continue;
 
-            for (uint256 i = length; i > 0; --i) {
-                uint256 index = i - 1;
-                if (mintHistory[index].timestamp < timeAt24hAgo) {
-                    return index + 1;
-                }
-            }
+            DailyStats memory dailyStat = dailyStats[day];
+            uint256 totalVotes = dailyStat.totalVotingPointSpent;
+            if (totalVotes == 0) continue;
+
+            // NOTE: totalHuntReward unit is Ether, so we need to convert it to Wei by multiplying by 1e18
+            // Cast to uint256 explicitly to prevent overflow, and ensure safe arithmetic
+            totalHuntToClaim += (userVotes * dailyStat.totalHuntReward * 1e18) / totalVotes;
         }
-        return 0;
+
+        return (totalHuntToClaim, endDay);
     }
 }
 
+// MARK: - Interfaces
+
+/**
+ * @title IMCV2_Bond (Interface)
+ * @dev Minimal interface for the MCV2_Bond contract based on the provided source code.
+ */
 interface IMCV2_Bond {
+    /**
+     * @dev Checks if a token exists in the bond.
+     */
+    function exists(address token) external view returns (bool);
+
+    /**
+     * @dev Mint new tokens by depositing reserve tokens.
+     * @return The actual reserveAmount (HUNT) spent.
+     */
+    function mint(
+        address token,
+        uint256 tokensToMint,
+        uint256 maxReserveAmount,
+        address receiver
+    ) external returns (uint256);
+
     function tokenBond(
         address token
     )
@@ -185,11 +328,4 @@ interface IMCV2_Bond {
             address reserveToken,
             uint256 reserveBalance
         );
-
-    function mint(
-        address token,
-        uint256 tokensToMint,
-        uint256 maxReserveAmount,
-        address receiver
-    ) external returns (uint256);
 }
