@@ -12,6 +12,7 @@ contract Mintpad is Ownable {
     error Mintpad__InsufficientVotingPoints();
     error Mintpad__NothingToClaim();
     error Mintpad__TooMuchLeftOver(uint256 actualHuntSpent);
+    error Mintpad__TotalPointsUnderflow();
 
     // MARK: - Constants
     IERC20 private constant HUNT = IERC20(0x37f0c2915CeCC7e977183B8543Fc0864d03E064C);
@@ -139,7 +140,22 @@ contract Mintpad is Ownable {
     function setVotingPoint(address user, uint32 newVotingPoint) external onlyOwner _whenRollingOver {
         uint256 day = dayCounter;
         uint32 oldVotingPoint = dailyUserVotingPoint[day][user];
+
+        // Gas optimization: Skip if no change
+        if (oldVotingPoint == newVotingPoint) return;
+
         dailyUserVotingPoint[day][user] = newVotingPoint;
+
+        // Bugfix: Update totalVotingPointGiven to reflect the delta
+        DailyStats memory stats = dailyStats[day];
+        if (newVotingPoint > oldVotingPoint) {
+            stats.totalVotingPointGiven += (newVotingPoint - oldVotingPoint);
+        } else {
+            uint32 delta = oldVotingPoint - newVotingPoint;
+            if (stats.totalVotingPointGiven < delta) revert Mintpad__TotalPointsUnderflow();
+            stats.totalVotingPointGiven -= delta;
+        }
+        dailyStats[day] = stats;
 
         emit VotingPointsAdded(day, 1, int256(uint256(newVotingPoint)) - int256(uint256(oldVotingPoint)));
     }
@@ -187,9 +203,11 @@ contract Mintpad is Ownable {
             dailyUserVotingPoint[day][user] = remainingPoints - voteAmount;
             dailyUserTokenVotes[day][user][token] += voteAmount;
 
-            DailyStats storage stats = dailyStats[day];
+            // Gas optimization: Load struct to memory, modify, and write back once
+            DailyStats memory stats = dailyStats[day];
             stats.totalVotingPointSpent += voteAmount;
             ++stats.votingCount;
+            dailyStats[day] = stats;
         }
 
         emit Voted(day, user, token, voteAmount);
@@ -246,9 +264,13 @@ contract Mintpad is Ownable {
         }
 
         // 5. Update daily stats
-        DailyStats storage stats = dailyStats[dayCounter];
-        stats.totalHuntClaimed += uint80(actualHuntSpent);
-        ++stats.claimCount;
+        // Gas optimization: Load struct to memory, modify, and write back once
+        unchecked {
+            DailyStats memory stats = dailyStats[dayCounter];
+            stats.totalHuntClaimed += uint80(actualHuntSpent);
+            ++stats.claimCount;
+            dailyStats[dayCounter] = stats;
+        }
 
         emit Claimed(user, token, endDay, actualHuntSpent, tokensToMint, donationBp);
     }
