@@ -6,6 +6,7 @@ import { getAddress, getContract, erc20Abi } from "viem";
 // Constants for testing
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const BOND_ADDRESS = "0xc5a076cad94176c2996B32d8466Be1cE757FAa27";
+const BOND_PERIPHERY_ADDRESS = "0x492C412369Db76C9cdD9939e6C521579301473a3";
 const HUNT_TOKEN = "0x37f0c2915CeCC7e977183B8543Fc0864d03E064C"; // HUNT token address
 const TEST_TOKEN = "0xDF2B673Ec06d210C8A8Be89441F8de60B5C679c9"; // SIGNET
 const INITIAL_HUNT_BALANCE = 10_000n * 10n ** 18n; // 10,000 HUNT tokens for testing
@@ -15,6 +16,33 @@ describe("Mintpad", async function () {
   const connection = await network.connect("baseFork");
   const { viem, networkHelpers } = connection;
   const { impersonateAccount, stopImpersonatingAccount } = networkHelpers;
+
+  async function estimateTokenAmount(token: `0x${string}`, huntAmount: bigint) {
+    const publicClient = await viem.getPublicClient();
+
+    const bondPeriphery = getContract({
+      address: BOND_PERIPHERY_ADDRESS,
+      abi: [
+        {
+          name: "getTokensForReserve",
+          type: "function",
+          stateMutability: "view",
+          inputs: [
+            { name: "tokenAddress", type: "address" },
+            { name: "reserveAmount", type: "uint256" },
+            { name: "useCeilDivision", type: "bool" }
+          ],
+          outputs: [
+            { name: "tokensToMint", type: "uint256" },
+            { name: "reserveAddress", type: "address" }
+          ]
+        }
+      ] as const,
+      client: publicClient
+    });
+    const [tokensToMint] = await bondPeriphery.read.getTokensForReserve([token, huntAmount, true]);
+    return tokensToMint;
+  }
 
   async function deployMintpadFixture() {
     const [owner, alice, bob] = await viem.getWalletClients();
@@ -144,16 +172,16 @@ describe("Mintpad", async function () {
       });
     }); // endRollOver
 
-    describe("setVotingPoints", function () {
+    describe("addVotingPoints", function () {
       beforeEach(async function () {
         await mintpad.write.startRollOver({ account: owner.account });
       });
 
-      it("should allow owner to set voting points", async function () {
+      it("should allow owner to add voting points", async function () {
         const users = [alice.account.address, bob.account.address];
         const points = [100, 200];
 
-        await mintpad.write.setVotingPoints([users, points], { account: owner.account });
+        await mintpad.write.addVotingPoints([users, points], { account: owner.account });
 
         const dayCounter = await mintpad.read.dayCounter();
         const alicePoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
@@ -166,23 +194,42 @@ describe("Mintpad", async function () {
         assert.equal(stats[0], 300); // totalVotingPointGiven
       });
 
-      it("should emit VotingPointsUpdated event", async function () {
+      it("should add to existing voting points", async function () {
+        const users = [alice.account.address, bob.account.address];
+        const points1 = [100, 200];
+        const points2 = [50, 75];
+
+        await mintpad.write.addVotingPoints([users, points1], { account: owner.account });
+        await mintpad.write.addVotingPoints([users, points2], { account: owner.account });
+
+        const dayCounter = await mintpad.read.dayCounter();
+        const alicePoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
+        const bobPoints = await mintpad.read.dailyUserVotingPoint([dayCounter, bob.account.address]);
+
+        assert.equal(alicePoints, 150); // 100 + 50
+        assert.equal(bobPoints, 275); // 200 + 75
+
+        const stats = await mintpad.read.dailyStats([dayCounter]);
+        assert.equal(stats[0], 425); // totalVotingPointGiven: 300 + 125
+      });
+
+      it("should emit VotingPointsAdded event", async function () {
         const users = [alice.account.address];
         const points = [100];
 
         const dayCounter = await mintpad.read.dayCounter();
 
         await viem.assertions.emitWithArgs(
-          mintpad.write.setVotingPoints([users, points], { account: owner.account }),
+          mintpad.write.addVotingPoints([users, points], { account: owner.account }),
           mintpad,
-          "VotingPointsUpdated",
-          [dayCounter, 1n, 100]
+          "VotingPointsAdded",
+          [dayCounter, 1n, 100n]
         );
       });
 
-      it("should revert when non-owner tries to set voting points", async function () {
+      it("should revert when non-owner tries to add voting points", async function () {
         await assert.rejects(
-          mintpad.write.setVotingPoints([[alice.account.address], [100]], { account: alice.account }),
+          mintpad.write.addVotingPoints([[alice.account.address], [100]], { account: alice.account }),
           /OwnableUnauthorizedAccount/
         );
       });
@@ -191,20 +238,98 @@ describe("Mintpad", async function () {
         await mintpad.write.endRollOver([1000], { account: owner.account });
 
         await assert.rejects(
-          mintpad.write.setVotingPoints([[alice.account.address], [100]], { account: owner.account }),
+          mintpad.write.addVotingPoints([[alice.account.address], [100]], { account: owner.account }),
           /Mintpad__RollOverNotInProgress/
         );
       });
 
       it("should revert when array lengths mismatch", async function () {
         await assert.rejects(
-          mintpad.write.setVotingPoints([[alice.account.address, bob.account.address], [100]], {
+          mintpad.write.addVotingPoints([[alice.account.address, bob.account.address], [100]], {
             account: owner.account
           }),
           /Mintpad__InvalidParams\("length mismatch"\)/
         );
       });
-    }); // setVotingPoints
+    }); // addVotingPoints
+
+    describe("setVotingPoint", function () {
+      beforeEach(async function () {
+        await mintpad.write.startRollOver({ account: owner.account });
+      });
+
+      it("should allow owner to set voting point for a user", async function () {
+        await mintpad.write.setVotingPoint([alice.account.address, 150], { account: owner.account });
+
+        const dayCounter = await mintpad.read.dayCounter();
+        const alicePoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
+
+        assert.equal(alicePoints, 150);
+      });
+
+      it("should emit VotingPointsAdded event with correct delta when setting from zero", async function () {
+        const dayCounter = await mintpad.read.dayCounter();
+
+        await viem.assertions.emitWithArgs(
+          mintpad.write.setVotingPoint([alice.account.address, 100], { account: owner.account }),
+          mintpad,
+          "VotingPointsAdded",
+          [dayCounter, 1n, 100n]
+        );
+      });
+
+      it("should emit VotingPointsAdded event with positive delta when increasing", async function () {
+        await mintpad.write.setVotingPoint([alice.account.address, 100], { account: owner.account });
+
+        const dayCounter = await mintpad.read.dayCounter();
+
+        await viem.assertions.emitWithArgs(
+          mintpad.write.setVotingPoint([alice.account.address, 150], { account: owner.account }),
+          mintpad,
+          "VotingPointsAdded",
+          [dayCounter, 1n, 50n] // 150 - 100
+        );
+      });
+
+      it("should emit VotingPointsAdded event with negative delta when decreasing", async function () {
+        await mintpad.write.setVotingPoint([alice.account.address, 100], { account: owner.account });
+
+        const dayCounter = await mintpad.read.dayCounter();
+
+        await viem.assertions.emitWithArgs(
+          mintpad.write.setVotingPoint([alice.account.address, 60], { account: owner.account }),
+          mintpad,
+          "VotingPointsAdded",
+          [dayCounter, 1n, -40n] // 60 - 100
+        );
+      });
+
+      it("should replace existing voting point (not add)", async function () {
+        await mintpad.write.addVotingPoints([[alice.account.address], [100]], { account: owner.account });
+        await mintpad.write.setVotingPoint([alice.account.address, 50], { account: owner.account });
+
+        const dayCounter = await mintpad.read.dayCounter();
+        const alicePoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
+
+        assert.equal(alicePoints, 50); // Should be 50, not 150
+      });
+
+      it("should revert when non-owner tries to set voting point", async function () {
+        await assert.rejects(
+          mintpad.write.setVotingPoint([alice.account.address, 100], { account: alice.account }),
+          /OwnableUnauthorizedAccount/
+        );
+      });
+
+      it("should revert when not in roll-over", async function () {
+        await mintpad.write.endRollOver([1000], { account: owner.account });
+
+        await assert.rejects(
+          mintpad.write.setVotingPoint([alice.account.address, 100], { account: owner.account }),
+          /Mintpad__RollOverNotInProgress/
+        );
+      });
+    }); // setVotingPoint
 
     describe("refundHUNT", function () {
       it("should allow owner to refund HUNT tokens", async function () {
@@ -268,7 +393,7 @@ describe("Mintpad", async function () {
       await mintpad.write.startRollOver({ account: owner.account });
       const users = [alice.account.address, bob.account.address];
       const points = [alicePoints, bobPoints];
-      await mintpad.write.setVotingPoints([users, points], { account: owner.account });
+      await mintpad.write.addVotingPoints([users, points], { account: owner.account });
       await mintpad.write.endRollOver([10000], { account: owner.account }); // 10000 HUNT reward
     }
 
@@ -326,11 +451,11 @@ describe("Mintpad", async function () {
 
         await mintpad.write.vote([TEST_TOKEN, voteAmount], { account: alice.account });
 
-        const userVotingPointSpent = await mintpad.read.dailyUserVotingPointSpent([dayCounter, alice.account.address]);
+        const userRemainingPoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
         const userTokenVotes = await mintpad.read.dailyUserTokenVotes([dayCounter, alice.account.address, TEST_TOKEN]);
         const stats = await mintpad.read.dailyStats([dayCounter]);
 
-        assert.equal(userVotingPointSpent, voteAmount);
+        assert.equal(userRemainingPoints, 1000 - voteAmount); // Started with 1000
         assert.equal(userTokenVotes, voteAmount);
         assert.equal(stats[1], voteAmount); // totalVotingPointSpent
       });
@@ -343,10 +468,10 @@ describe("Mintpad", async function () {
         await mintpad.write.vote([TEST_TOKEN, voteAmount1], { account: alice.account });
         await mintpad.write.vote([TEST_TOKEN, voteAmount2], { account: alice.account });
 
-        const userVotingPointSpent = await mintpad.read.dailyUserVotingPointSpent([dayCounter, alice.account.address]);
+        const userRemainingPoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
         const userTokenVotes = await mintpad.read.dailyUserTokenVotes([dayCounter, alice.account.address, TEST_TOKEN]);
 
-        assert.equal(userVotingPointSpent, voteAmount1 + voteAmount2);
+        assert.equal(userRemainingPoints, 1000 - voteAmount1 - voteAmount2); // Started with 1000
         assert.equal(userTokenVotes, voteAmount1 + voteAmount2);
       });
 
@@ -378,6 +503,63 @@ describe("Mintpad", async function () {
         assert.equal(bobTokenVotes, bobVote);
         assert.equal(stats[1], aliceVote + bobVote); // totalVotingPointSpent
       });
+
+      it("should increment votingCount for each vote", async function () {
+        const dayCounter = await mintpad.read.dayCounter();
+
+        // Check initial votingCount is 0
+        let stats = await mintpad.read.dailyStats([dayCounter]);
+        assert.equal(stats[4], 0); // votingCount
+
+        // First vote
+        await mintpad.write.vote([TEST_TOKEN, 100], { account: alice.account });
+        stats = await mintpad.read.dailyStats([dayCounter]);
+        assert.equal(stats[4], 1); // votingCount should be 1
+
+        // Second vote from same user
+        await mintpad.write.vote([TEST_TOKEN, 200], { account: alice.account });
+        stats = await mintpad.read.dailyStats([dayCounter]);
+        assert.equal(stats[4], 2); // votingCount should be 2
+
+        // Third vote from different user
+        await mintpad.write.vote([TEST_TOKEN, 300], { account: bob.account });
+        stats = await mintpad.read.dailyStats([dayCounter]);
+        assert.equal(stats[4], 3); // votingCount should be 3
+      });
+
+      it("should track votingCount independently per day", async function () {
+        // Day 1: 2 votes
+        let dayCounter = await mintpad.read.dayCounter();
+        await mintpad.write.vote([TEST_TOKEN, 100], { account: alice.account });
+        await mintpad.write.vote([TEST_TOKEN, 200], { account: bob.account });
+
+        let day1Stats = await mintpad.read.dailyStats([dayCounter]);
+        assert.equal(day1Stats[4], 2); // votingCount for day 1
+
+        // Start Day 2
+        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.addVotingPoints(
+          [
+            [alice.account.address, bob.account.address],
+            [1000, 500]
+          ],
+          {
+            account: owner.account
+          }
+        );
+        await mintpad.write.endRollOver([1000], { account: owner.account });
+
+        // Day 2: 1 vote
+        dayCounter = await mintpad.read.dayCounter();
+        await mintpad.write.vote([TEST_TOKEN, 100], { account: alice.account });
+
+        let day2Stats = await mintpad.read.dailyStats([dayCounter]);
+        assert.equal(day2Stats[4], 1); // votingCount for day 2 should be 1
+
+        // Day 1 stats should remain unchanged
+        day1Stats = await mintpad.read.dailyStats([dayCounter - 1n]);
+        assert.equal(day1Stats[4], 2); // votingCount for day 1 still 2
+      });
     }); // Success cases
   }); // Vote function
 
@@ -389,15 +571,11 @@ describe("Mintpad", async function () {
     const DAILY_ALICE_REWARDS_EXPECTED = [1000n * 10n ** 18n, 1200n * 10n ** 18n];
     const DAILY_BOB_REWARDS_EXPECTED = [0n, 800n * 10n ** 18n];
 
-    // Estimate how many tokens we can mint (approximated value on the forked block: 37720000)
-    const TOKEN_AMOUNT_WITH_2200_HUNT = 4100n * 10n ** 18n; // 4100 SIGNET tokens
-    const TOKEN_AMOUNT_WITH_800_HUNT = 1530n * 10n ** 18n; // 1530 SIGNET tokens
-
     // Helper to set up multiple days with voting
     async function setupMultipleDays() {
       // Day 1
       await mintpad.write.startRollOver({ account: owner.account });
-      await mintpad.write.setVotingPoints(
+      await mintpad.write.addVotingPoints(
         [
           [alice.account.address, bob.account.address],
           [1000, 500]
@@ -413,7 +591,7 @@ describe("Mintpad", async function () {
 
       // Day 2
       await mintpad.write.startRollOver({ account: owner.account });
-      await mintpad.write.setVotingPoints(
+      await mintpad.write.addVotingPoints(
         [
           [alice.account.address, bob.account.address],
           [1000, 500]
@@ -430,7 +608,7 @@ describe("Mintpad", async function () {
 
       // Day 3 (current day, no claims yet)
       await mintpad.write.startRollOver({ account: owner.account });
-      await mintpad.write.setVotingPoints(
+      await mintpad.write.addVotingPoints(
         [
           [alice.account.address, bob.account.address],
           [1000, 500]
@@ -503,10 +681,12 @@ describe("Mintpad", async function () {
 
         const initialAliceBalance = await testToken.read.balanceOf([alice.account.address]);
 
-        await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account });
+        // Calculate token amount dynamically based on claimable HUNT
+        const tokenAmount = await estimateTokenAmount(TEST_TOKEN, claimableHunt);
+        await mintpad.write.claim([TEST_TOKEN, tokenAmount, 0], { account: alice.account });
 
         const finalAliceBalance = await testToken.read.balanceOf([alice.account.address]);
-        assert.equal(finalAliceBalance, initialAliceBalance + TOKEN_AMOUNT_WITH_2200_HUNT);
+        assert.equal(finalAliceBalance, initialAliceBalance + tokenAmount);
 
         // Check that lastClaimDay was updated
         const lastClaimDay = await mintpad.read.userTokenLastClaimDay([alice.account.address, TEST_TOKEN]);
@@ -522,10 +702,12 @@ describe("Mintpad", async function () {
 
         const initialBobBalance = await testToken.read.balanceOf([bob.account.address]);
 
-        await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_800_HUNT, 0], { account: bob.account });
+        // Calculate token amount dynamically based on claimable HUNT
+        const tokenAmount = await estimateTokenAmount(TEST_TOKEN, claimableHunt);
+        await mintpad.write.claim([TEST_TOKEN, tokenAmount, 0], { account: bob.account });
 
         const finalBobBalance = await testToken.read.balanceOf([bob.account.address]);
-        assert.equal(finalBobBalance, initialBobBalance + TOKEN_AMOUNT_WITH_800_HUNT);
+        assert.equal(finalBobBalance, initialBobBalance + tokenAmount);
 
         // Check that lastClaimDay was updated
         const lastClaimDay = await mintpad.read.userTokenLastClaimDay([bob.account.address, TEST_TOKEN]);
@@ -533,7 +715,11 @@ describe("Mintpad", async function () {
       });
 
       it("should emit Claimed event", async function () {
-        const tx = mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account });
+        // Calculate token amount dynamically for Alice's claimable HUNT
+        const [claimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+        const tokenAmount = await estimateTokenAmount(TEST_TOKEN, claimableHunt);
+
+        const tx = mintpad.write.claim([TEST_TOKEN, tokenAmount, 0], { account: alice.account });
 
         // Just check that it emits the event with correct user and token
         await viem.assertions.emit(tx, mintpad, "Claimed");
@@ -568,7 +754,11 @@ describe("Mintpad", async function () {
         const initialAliceBalance = BigInt(await testToken.read.balanceOf([alice.account.address]));
         const initialCreatorBalance = BigInt(await testToken.read.balanceOf([tokenCreator]));
 
-        await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, Number(donationBp)], {
+        // Calculate token amount dynamically for Alice's claimable HUNT
+        const [claimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+        const tokenAmount = await estimateTokenAmount(TEST_TOKEN, claimableHunt);
+
+        await mintpad.write.claim([TEST_TOKEN, tokenAmount, Number(donationBp)], {
           account: alice.account
         });
 
@@ -576,22 +766,165 @@ describe("Mintpad", async function () {
         const finalCreatorBalance = BigInt(await testToken.read.balanceOf([tokenCreator]));
 
         // Check that donation was sent to creator
-        assert.equal(finalCreatorBalance, initialCreatorBalance + (TOKEN_AMOUNT_WITH_2200_HUNT * donationBp) / 10000n);
-        assert.equal(
-          finalAliceBalance,
-          initialAliceBalance + TOKEN_AMOUNT_WITH_2200_HUNT - (TOKEN_AMOUNT_WITH_2200_HUNT * donationBp) / 10000n
-        );
+        assert.equal(finalCreatorBalance, initialCreatorBalance + (tokenAmount * donationBp) / 10000n);
+        assert.equal(finalAliceBalance, initialAliceBalance + tokenAmount - (tokenAmount * donationBp) / 10000n);
       });
 
       it("should prevent double claiming", async function () {
+        // Calculate token amount dynamically for Alice's claimable HUNT
+        const [claimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+        const tokenAmount = await estimateTokenAmount(TEST_TOKEN, claimableHunt);
+
         // First claim
-        await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account });
+        await mintpad.write.claim([TEST_TOKEN, tokenAmount, 0], { account: alice.account });
 
         // Second claim should fail (nothing to claim)
         await assert.rejects(
-          mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account }),
+          mintpad.write.claim([TEST_TOKEN, tokenAmount, 0], { account: alice.account }),
           /Mintpad__NothingToClaim/
         );
+      });
+
+      it("should track totalHuntClaimed on current day", async function () {
+        const currentDay = await mintpad.read.dayCounter();
+        const publicClient = await viem.getPublicClient();
+
+        // Check initial totalHuntClaimed
+        let stats = await mintpad.read.dailyStats([currentDay]);
+        const initialClaimed = stats[3]; // totalHuntClaimed
+
+        // Calculate token amount dynamically for Alice's claimable HUNT
+        const [aliceClaimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+        const aliceTokenAmount = await estimateTokenAmount(TEST_TOKEN, aliceClaimableHunt);
+
+        // Alice claims (2200 HUNT worth of rewards)
+        const aliceTxHash = await mintpad.write.claim([TEST_TOKEN, aliceTokenAmount, 0], {
+          account: alice.account
+        });
+        const aliceReceipt = await publicClient.waitForTransactionReceipt({ hash: aliceTxHash });
+        const aliceClaimedEvents = await mintpad.getEvents.Claimed(
+          {},
+          { fromBlock: aliceReceipt.blockNumber, toBlock: aliceReceipt.blockNumber }
+        );
+        const aliceActualHuntSpent = aliceClaimedEvents[0].args.actualHuntSpent!;
+
+        // Check totalHuntClaimed is updated on current day with exact value
+        stats = await mintpad.read.dailyStats([currentDay]);
+        const afterAliceClaimed = stats[3]; // totalHuntClaimed
+        assert.equal(
+          afterAliceClaimed,
+          initialClaimed + aliceActualHuntSpent,
+          "totalHuntClaimed should equal initial + Alice's actualHuntSpent"
+        );
+
+        // Check if Bob has anything to claim
+        const [bobClaimable] = await mintpad.read.getClaimableHunt([bob.account.address, TEST_TOKEN]);
+        if (bobClaimable > 0n) {
+          // Calculate token amount dynamically for Bob's claimable HUNT
+          const bobTokenAmount = await estimateTokenAmount(TEST_TOKEN, bobClaimable);
+
+          // Bob claims (800 HUNT worth of rewards)
+          const bobTxHash = await mintpad.write.claim([TEST_TOKEN, bobTokenAmount, 0], {
+            account: bob.account
+          });
+          const bobReceipt = await publicClient.waitForTransactionReceipt({ hash: bobTxHash });
+          const bobClaimedEvents = await mintpad.getEvents.Claimed(
+            {},
+            { fromBlock: bobReceipt.blockNumber, toBlock: bobReceipt.blockNumber }
+          );
+          const bobActualHuntSpent = bobClaimedEvents[0].args.actualHuntSpent!;
+
+          // Check totalHuntClaimed is accumulated on current day with exact value
+          stats = await mintpad.read.dailyStats([currentDay]);
+          const afterBothClaimed = stats[3]; // totalHuntClaimed
+          assert.equal(
+            afterBothClaimed,
+            initialClaimed + aliceActualHuntSpent + bobActualHuntSpent,
+            "totalHuntClaimed should equal initial + both actualHuntSpent values"
+          );
+        }
+      });
+
+      it("should increment claimCount on current day", async function () {
+        const currentDay = await mintpad.read.dayCounter();
+
+        // Check initial claimCount
+        let stats = await mintpad.read.dailyStats([currentDay]);
+        const initialClaimCount = stats[5]; // claimCount
+
+        // Calculate token amount dynamically for Alice's claimable HUNT
+        const [aliceClaimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+        const aliceTokenAmount = await estimateTokenAmount(TEST_TOKEN, aliceClaimableHunt);
+
+        // Alice claims
+        await mintpad.write.claim([TEST_TOKEN, aliceTokenAmount, 0], { account: alice.account });
+
+        // Check claimCount is incremented on current day
+        stats = await mintpad.read.dailyStats([currentDay]);
+        assert.equal(stats[5], initialClaimCount + 1); // claimCount should be incremented by 1
+
+        // Check if Bob has anything to claim
+        const [bobClaimable] = await mintpad.read.getClaimableHunt([bob.account.address, TEST_TOKEN]);
+        if (bobClaimable > 0n) {
+          // Calculate token amount dynamically for Bob's claimable HUNT
+          const bobTokenAmount = await estimateTokenAmount(TEST_TOKEN, bobClaimable);
+
+          // Bob claims
+          await mintpad.write.claim([TEST_TOKEN, bobTokenAmount, 0], { account: bob.account });
+
+          // Check claimCount is incremented again on current day
+          stats = await mintpad.read.dailyStats([currentDay]);
+          assert.equal(stats[5], initialClaimCount + 2); // claimCount should be incremented by 2
+        }
+      });
+
+      it("should track claims independently per day", async function () {
+        const currentDay = await mintpad.read.dayCounter();
+
+        // Get initial claim count for day 3
+        let day3Stats = await mintpad.read.dailyStats([currentDay]);
+        const day3InitialClaimCount = day3Stats[5];
+
+        // Calculate token amount dynamically for Alice's claimable HUNT
+        const [aliceClaimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+        const aliceTokenAmount = await estimateTokenAmount(TEST_TOKEN, aliceClaimableHunt);
+
+        // Alice claims on Day 3 (current day)
+        await mintpad.write.claim([TEST_TOKEN, aliceTokenAmount, 0], { account: alice.account });
+
+        day3Stats = await mintpad.read.dailyStats([currentDay]);
+        assert.equal(day3Stats[5], day3InitialClaimCount + 1); // claimCount for day 3 should increment
+
+        // Setup Day 4 with new votes
+        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.addVotingPoints([[bob.account.address], [1000]], { account: owner.account });
+        await mintpad.write.endRollOver([1500], { account: owner.account });
+
+        // Bob votes on Day 4
+        await mintpad.write.vote([TEST_TOKEN, 500], { account: bob.account });
+
+        // Setup Day 5
+        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.addVotingPoints([[bob.account.address], [1000]], { account: owner.account });
+        await mintpad.write.endRollOver([1600], { account: owner.account });
+
+        const day5 = await mintpad.read.dayCounter();
+
+        // Bob claims on Day 5 (his votes from Day 4)
+        const [bobClaimable] = await mintpad.read.getClaimableHunt([bob.account.address, TEST_TOKEN]);
+        if (bobClaimable > 0n) {
+          // Calculate token amount dynamically for Bob's claimable HUNT
+          const bobTokenAmount = await estimateTokenAmount(TEST_TOKEN, bobClaimable);
+          await mintpad.write.claim([TEST_TOKEN, bobTokenAmount, 0], { account: bob.account });
+
+          // Day 5 should have 1 claim
+          let day5Stats = await mintpad.read.dailyStats([day5]);
+          assert.equal(day5Stats[5], 1); // claimCount for day 5 should be 1
+
+          // Day 3 stats should remain unchanged
+          day3Stats = await mintpad.read.dailyStats([currentDay]);
+          assert.equal(day3Stats[5], day3InitialClaimCount + 1); // claimCount for day 3 unchanged
+        }
       });
     }); // Success cases
 
@@ -624,10 +957,14 @@ describe("Mintpad", async function () {
         it("should return 0 after claim", async function () {
           await setupMultipleDays();
 
-          await mintpad.write.claim([TEST_TOKEN, TOKEN_AMOUNT_WITH_2200_HUNT, 0], { account: alice.account });
-
+          // Calculate token amount dynamically for Alice's claimable HUNT
           const [claimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
-          assert.equal(claimableHunt, 0n);
+          const tokenAmount = await estimateTokenAmount(TEST_TOKEN, claimableHunt);
+
+          await mintpad.write.claim([TEST_TOKEN, tokenAmount, 0], { account: alice.account });
+
+          const [newClaimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+          assert.equal(newClaimableHunt, 0n);
         });
 
         it("should handle vote expiration (30 days)", async function () {

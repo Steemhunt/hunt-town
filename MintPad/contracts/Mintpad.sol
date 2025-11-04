@@ -22,7 +22,7 @@ contract Mintpad is Ownable {
     uint256 public dayCounter;
     bool public isRollOverInProgress;
 
-    // [day][user] => voting point (Set by Owner daily)
+    // [day][user] => voting point remaining (Set by Owner daily, deducted on vote)
     mapping(uint256 => mapping(address => uint32)) public dailyUserVotingPoint;
 
     // [day] => DailyStats
@@ -36,9 +36,6 @@ contract Mintpad is Ownable {
     }
     mapping(uint256 => DailyStats) public dailyStats;
 
-    // [day][user] => Total voting points spent by the user on that day
-    mapping(uint256 => mapping(address => uint32)) public dailyUserVotingPointSpent;
-
     // [day][user][token] => Voting points spent by the user on a specific token on that day
     mapping(uint256 => mapping(address => mapping(address => uint32))) public dailyUserTokenVotes;
 
@@ -46,7 +43,7 @@ contract Mintpad is Ownable {
     mapping(address => mapping(address => uint256)) public userTokenLastClaimDay;
 
     // MARK: - Events
-    event VotingPointsUpdated(uint256 indexed day, uint256 updateCount, uint32 indexed pointAdded);
+    event VotingPointsAdded(uint256 indexed day, uint256 updateCount, int256 indexed pointAdded);
     event Voted(uint256 indexed day, address indexed user, address indexed token, uint32 voteAmount);
     event Claimed(
         address indexed user,
@@ -59,6 +56,8 @@ contract Mintpad is Ownable {
 
     // MARK: - Constructor
     constructor(address bond) Ownable(msg.sender) {
+        // TODO: Add a separate signer (hot key) for daily operations
+
         if (bond == address(0)) revert Mintpad__InvalidParams("bond");
 
         BOND = IMCV2_Bond(bond);
@@ -104,11 +103,11 @@ contract Mintpad is Ownable {
     }
 
     /**
-     * @dev Sets the voting points for users for a specific day.
+     * @dev Adds voting points for multiple users for the current day.
      * @param users List of user addresses.
-     * @param votingPoints List of voting points for each user.
+     * @param votingPoints List of voting points to add for each user.
      */
-    function setVotingPoints(
+    function addVotingPoints(
         address[] calldata users,
         uint32[] calldata votingPoints
     ) external onlyOwner _whenRollingOver {
@@ -116,14 +115,33 @@ contract Mintpad is Ownable {
         if (updateCount != votingPoints.length) revert Mintpad__InvalidParams("length mismatch");
 
         uint256 day = dayCounter;
-        uint32 totalPointAdded = 0;
-        for (uint256 i = 0; i < updateCount; ++i) {
-            dailyUserVotingPoint[day][users[i]] = votingPoints[i];
-            totalPointAdded += votingPoints[i];
-        }
-        dailyStats[day].totalVotingPointGiven += totalPointAdded;
+        uint256 totalPointAdded = 0;
 
-        emit VotingPointsUpdated(day, updateCount, totalPointAdded);
+        unchecked {
+            for (uint256 i = 0; i < updateCount; ++i) {
+                uint32 points = votingPoints[i];
+                dailyUserVotingPoint[day][users[i]] += points;
+                totalPointAdded += points;
+            }
+        }
+
+        // Safe to cast to uint32 because totalPointAdded is always less than ~200M
+        dailyStats[day].totalVotingPointGiven += uint32(totalPointAdded);
+
+        emit VotingPointsAdded(day, updateCount, int256(totalPointAdded));
+    }
+
+    /**
+     * @dev Sets the voting point for a user for the current day. (for new users added during the daily voting window)
+     * @param user The address of the user to set the voting point for.
+     * @param newVotingPoint The new voting point to set.
+     */
+    function setVotingPoint(address user, uint32 newVotingPoint) external onlyOwner _whenRollingOver {
+        uint256 day = dayCounter;
+        uint32 oldVotingPoint = dailyUserVotingPoint[day][user];
+        dailyUserVotingPoint[day][user] = newVotingPoint;
+
+        emit VotingPointsAdded(day, 1, int256(uint256(newVotingPoint)) - int256(uint256(oldVotingPoint)));
     }
 
     // MARK: - Admin Emergency Functions
@@ -158,18 +176,21 @@ contract Mintpad is Ownable {
         address user = msg.sender;
         uint256 day = dayCounter;
 
-        // 1. Check user's remaining voting points
-        uint32 totalAllottedPoints = dailyUserVotingPoint[day][user];
-        uint32 alreadySpentPoints = dailyUserVotingPointSpent[day][user];
-
-        if (alreadySpentPoints + voteAmount > totalAllottedPoints) {
+        // 1. Check user's remaining voting points and deduct
+        uint32 remainingPoints = dailyUserVotingPoint[day][user];
+        if (voteAmount > remainingPoints) {
             revert Mintpad__InsufficientVotingPoints();
         }
 
-        // 2. Update voting status (gas-efficient mapping updates)
-        dailyUserVotingPointSpent[day][user] = alreadySpentPoints + voteAmount;
-        dailyUserTokenVotes[day][user][token] += voteAmount;
-        dailyStats[day].totalVotingPointSpent += voteAmount;
+        unchecked {
+            // 2. Update voting status - deduct from remaining points
+            dailyUserVotingPoint[day][user] = remainingPoints - voteAmount;
+            dailyUserTokenVotes[day][user][token] += voteAmount;
+
+            DailyStats storage stats = dailyStats[day];
+            stats.totalVotingPointSpent += voteAmount;
+            ++stats.votingCount;
+        }
 
         emit Voted(day, user, token, voteAmount);
     }
@@ -183,7 +204,7 @@ contract Mintpad is Ownable {
         address token,
         uint256 tokensToMint,
         uint256 donationBp
-    ) external _whenNotRollingOver _validChildToken(token) {
+    ) external _whenNotRollingOver _validChildToken(token) returns (uint256 actualHuntSpent) {
         if (tokensToMint == 0) revert Mintpad__InvalidParams("tokensToMint must be greater than 0");
 
         address user = msg.sender;
@@ -200,24 +221,34 @@ contract Mintpad is Ownable {
         // 3. Execute the mint via the BOND contract
         // We use `tokensToMint` as the desired token amount, and `totalHuntToClaim` as the `maxReserveAmount` (slippage protection).
         // The BOND.mint function will revert if the actual HUNT cost > totalHuntToClaim.
-        uint256 actualHuntSpent = BOND.mint(token, tokensToMint, totalHuntToClaim, address(this));
+        actualHuntSpent = BOND.mint(token, tokensToMint, totalHuntToClaim, address(this));
 
         // NOTE: actualHuntSpent can be smaller than totalHuntToClaim if tokensToMint is capped below the mintable amount.
         // To avoid leaving too much unspent, revert if the leftover exceeds 2% of totalHuntToClaim.
-        if (actualHuntSpent < (totalHuntToClaim * 98) / 100) {
-            revert Mintpad__TooMuchLeftOver(actualHuntSpent);
+        unchecked {
+            // Safe: totalHuntToClaim * 98 cannot overflow uint256
+            if (actualHuntSpent * 100 < totalHuntToClaim * 98) {
+                revert Mintpad__TooMuchLeftOver(actualHuntSpent);
+            }
         }
 
         // 4. Handle donations to the token creator
-        IERC20 t = IERC20(token);
-        (address creator, , , , , ) = BOND.tokenBond(token);
         if (donationBp > 0) {
-            uint256 donationAmount = (tokensToMint * donationBp) / 10000;
-            t.transfer(creator, donationAmount);
-            t.transfer(user, tokensToMint - donationAmount);
+            (address creator, , , , , ) = BOND.tokenBond(token);
+            unchecked {
+                // Safe: donationAmount <= tokensToMint
+                uint256 donationAmount = (tokensToMint * donationBp) / 10000;
+                IERC20(token).transfer(creator, donationAmount);
+                IERC20(token).transfer(user, tokensToMint - donationAmount);
+            }
         } else {
-            t.transfer(user, tokensToMint);
+            IERC20(token).transfer(user, tokensToMint);
         }
+
+        // 5. Update daily stats
+        DailyStats storage stats = dailyStats[dayCounter];
+        stats.totalHuntClaimed += uint80(actualHuntSpent);
+        ++stats.claimCount;
 
         emit Claimed(user, token, endDay, actualHuntSpent, tokensToMint, donationBp);
     }
@@ -253,39 +284,37 @@ contract Mintpad is Ownable {
 
         // 0. Cannot claim for the current day, only up to yesterday.
         if (currentDay == 0) return (0, 0); // No days have passed
-        endDay = currentDay - 1;
 
-        // 1. Calculate the 30-day expiration floor
-        uint256 expiryFloorDay = (currentDay > VOTE_EXPIRATION_DAYS) ? currentDay - VOTE_EXPIRATION_DAYS : 0;
+        unchecked {
+            endDay = currentDay - 1; // Safe: currentDay > 0
 
-        // 2. Get the last day this user-token pair was claimed
-        uint256 lastClaimedDay = userTokenLastClaimDay[user][token]; // Direct storage read is cheaper internally
+            // 1. Calculate the 30-day expiration floor
+            uint256 expiryFloorDay = currentDay > VOTE_EXPIRATION_DAYS ? currentDay - VOTE_EXPIRATION_DAYS : 0;
 
-        // 3. Determine the start day for calculation
-        // max(lastClaimedDay + 1, expiryFloorDay)
-        uint256 startDay;
-        if (lastClaimedDay != 0 && lastClaimedDay + 1 > expiryFloorDay) {
-            startDay = lastClaimedDay + 1;
-        } else {
-            startDay = expiryFloorDay;
-        }
+            // 2. Get the last day this user-token pair was claimed
+            uint256 lastClaimedDay = userTokenLastClaimDay[user][token];
 
-        if (startDay > endDay) return (0, endDay); // Nothing to claim
+            // 3. Determine the start day for calculation
+            // max(lastClaimedDay + 1, expiryFloorDay)
+            uint256 startDay = lastClaimedDay >= expiryFloorDay ? lastClaimedDay + 1 : expiryFloorDay;
 
-        totalHuntToClaim = 0;
+            if (startDay > endDay) return (0, endDay); // Nothing to claim
 
-        // 4. Loop (max 30 times) to calculate rewards
-        for (uint256 day = startDay; day <= endDay; ++day) {
-            uint256 userVotes = dailyUserTokenVotes[day][user][token];
-            if (userVotes == 0) continue;
+            totalHuntToClaim = 0;
 
-            DailyStats memory dailyStat = dailyStats[day];
-            uint256 totalVotes = dailyStat.totalVotingPointSpent;
-            if (totalVotes == 0) continue;
+            // 4. Loop (max 30 times) to calculate rewards
+            for (uint256 day = startDay; day <= endDay; ++day) {
+                uint256 userVotes = dailyUserTokenVotes[day][user][token];
+                if (userVotes == 0) continue;
 
-            // NOTE: totalHuntReward unit is Ether, so we need to convert it to Wei by multiplying by 1e18
-            // Cast to uint256 explicitly to prevent overflow, and ensure safe arithmetic
-            totalHuntToClaim += (userVotes * dailyStat.totalHuntReward * 1e18) / totalVotes;
+                DailyStats memory dailyStat = dailyStats[day];
+                uint256 totalVotes = dailyStat.totalVotingPointSpent;
+                if (totalVotes == 0) continue;
+
+                // NOTE: totalHuntReward unit is Ether, so we need to convert it to Wei by multiplying by 1e18
+                // Safe: the multiplication cannot overflow in practice given reasonable vote amounts
+                totalHuntToClaim += (userVotes * uint256(dailyStat.totalHuntReward) * 1e18) / totalVotes;
+            }
         }
 
         return (totalHuntToClaim, endDay);
