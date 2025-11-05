@@ -45,9 +45,9 @@ describe("Mintpad", async function () {
   }
 
   async function deployMintpadFixture() {
-    const [owner, alice, bob] = await viem.getWalletClients();
+    const [owner, signer, alice, bob] = await viem.getWalletClients();
 
-    const mintpad = await viem.deployContract("Mintpad", [BOND_ADDRESS]);
+    const mintpad = await viem.deployContract("Mintpad", [signer.account.address]);
 
     // Impersonate an address with enough HUNT balance and transfer HUNT to Mintpad contract
     const impersonatedAddress = "0xCB3f3e0E992435390e686D7b638FCb8baBa6c5c7";
@@ -68,18 +68,21 @@ describe("Mintpad", async function () {
       client: owner
     });
 
-    return { mintpad, owner, alice, bob, huntToken, testToken };
+    return { mintpad, owner, signer, alice, bob, huntToken, testToken };
   }
 
   let mintpad: any;
   let owner: any;
+  let signer: any;
   let alice: any;
   let bob: any;
   let huntToken: any;
   let testToken: any;
 
   beforeEach(async function () {
-    ({ mintpad, owner, alice, bob, huntToken, testToken } = await networkHelpers.loadFixture(deployMintpadFixture));
+    ({ mintpad, owner, signer, alice, bob, huntToken, testToken } = await networkHelpers.loadFixture(
+      deployMintpadFixture
+    ));
   });
 
   describe("Contract initialization", function () {
@@ -107,12 +110,17 @@ describe("Mintpad", async function () {
       const expirationDays = await mintpad.read.VOTE_EXPIRATION_DAYS();
       assert.equal(expirationDays, VOTE_EXPIRATION_DAYS);
     });
+
+    it("should set signer address correctly", async function () {
+      const signerAddress = await mintpad.read.signer();
+      assert.equal(signerAddress.toLowerCase(), signer.account.address.toLowerCase());
+    });
   }); // Contract initialization
 
   describe("Admin functions", function () {
     describe("startRollOver", function () {
-      it("should allow owner to start roll-over", async function () {
-        await mintpad.write.startRollOver({ account: owner.account });
+      it("should allow signer to start roll-over", async function () {
+        await mintpad.write.startRollOver({ account: signer.account });
 
         const isRollOverInProgress = await mintpad.read.isRollOverInProgress();
         const dayCounter = await mintpad.read.dayCounter();
@@ -121,17 +129,17 @@ describe("Mintpad", async function () {
         assert.equal(dayCounter, 1n);
       });
 
-      it("should revert when non-owner tries to start roll-over", async function () {
-        await assert.rejects(mintpad.write.startRollOver({ account: alice.account }), /OwnableUnauthorizedAccount/);
+      it("should revert when non-signer tries to start roll-over", async function () {
+        await assert.rejects(mintpad.write.startRollOver({ account: alice.account }), /Mintpad__PermissionDenied/);
       });
 
       it("should increment dayCounter each time", async function () {
-        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.startRollOver({ account: signer.account });
         let dayCounter = await mintpad.read.dayCounter();
         assert.equal(dayCounter, 1n);
 
-        await mintpad.write.endRollOver([100], { account: owner.account });
-        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.endRollOver([100], { account: signer.account });
+        await mintpad.write.startRollOver({ account: signer.account });
         dayCounter = await mintpad.read.dayCounter();
         assert.equal(dayCounter, 2n);
       });
@@ -139,13 +147,13 @@ describe("Mintpad", async function () {
 
     describe("endRollOver", function () {
       beforeEach(async function () {
-        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.startRollOver({ account: signer.account });
       });
 
-      it("should allow owner to end roll-over", async function () {
+      it("should allow signer to end roll-over", async function () {
         const totalHuntReward = 1000; // 1000 HUNT in ether units
 
-        await mintpad.write.endRollOver([totalHuntReward], { account: owner.account });
+        await mintpad.write.endRollOver([totalHuntReward], { account: signer.account });
 
         const isRollOverInProgress = await mintpad.read.isRollOverInProgress();
         assert.equal(isRollOverInProgress, false);
@@ -155,18 +163,18 @@ describe("Mintpad", async function () {
         assert.equal(stats[2], totalHuntReward); // totalHuntReward field
       });
 
-      it("should revert when non-owner tries to end roll-over", async function () {
+      it("should revert when non-signer tries to end roll-over", async function () {
         await assert.rejects(
           mintpad.write.endRollOver([1000], { account: alice.account }),
-          /OwnableUnauthorizedAccount/
+          /Mintpad__PermissionDenied/
         );
       });
 
       it("should revert when not in roll-over", async function () {
-        await mintpad.write.endRollOver([1000], { account: owner.account });
+        await mintpad.write.endRollOver([1000], { account: signer.account });
 
         await assert.rejects(
-          mintpad.write.endRollOver([1000], { account: owner.account }),
+          mintpad.write.endRollOver([1000], { account: signer.account }),
           /Mintpad__RollOverNotInProgress/
         );
       });
@@ -174,14 +182,14 @@ describe("Mintpad", async function () {
 
     describe("addVotingPoints", function () {
       beforeEach(async function () {
-        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.startRollOver({ account: signer.account });
       });
 
-      it("should allow owner to add voting points", async function () {
+      it("should allow signer to add voting points", async function () {
         const users = [alice.account.address, bob.account.address];
         const points = [100, 200];
 
-        await mintpad.write.addVotingPoints([users, points], { account: owner.account });
+        await mintpad.write.addVotingPoints([users, points], { account: signer.account });
 
         const dayCounter = await mintpad.read.dayCounter();
         const alicePoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
@@ -199,8 +207,8 @@ describe("Mintpad", async function () {
         const points1 = [100, 200];
         const points2 = [50, 75];
 
-        await mintpad.write.addVotingPoints([users, points1], { account: owner.account });
-        await mintpad.write.addVotingPoints([users, points2], { account: owner.account });
+        await mintpad.write.addVotingPoints([users, points1], { account: signer.account });
+        await mintpad.write.addVotingPoints([users, points2], { account: signer.account });
 
         const dayCounter = await mintpad.read.dayCounter();
         const alicePoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
@@ -220,25 +228,25 @@ describe("Mintpad", async function () {
         const dayCounter = await mintpad.read.dayCounter();
 
         await viem.assertions.emitWithArgs(
-          mintpad.write.addVotingPoints([users, points], { account: owner.account }),
+          mintpad.write.addVotingPoints([users, points], { account: signer.account }),
           mintpad,
           "VotingPointsAdded",
           [dayCounter, 1n, 100n]
         );
       });
 
-      it("should revert when non-owner tries to add voting points", async function () {
+      it("should revert when non-signer tries to add voting points", async function () {
         await assert.rejects(
           mintpad.write.addVotingPoints([[alice.account.address], [100]], { account: alice.account }),
-          /OwnableUnauthorizedAccount/
+          /Mintpad__PermissionDenied/
         );
       });
 
       it("should revert when not in roll-over", async function () {
-        await mintpad.write.endRollOver([1000], { account: owner.account });
+        await mintpad.write.endRollOver([1000], { account: signer.account });
 
         await assert.rejects(
-          mintpad.write.addVotingPoints([[alice.account.address], [100]], { account: owner.account }),
+          mintpad.write.addVotingPoints([[alice.account.address], [100]], { account: signer.account }),
           /Mintpad__RollOverNotInProgress/
         );
       });
@@ -246,7 +254,7 @@ describe("Mintpad", async function () {
       it("should revert when array lengths mismatch", async function () {
         await assert.rejects(
           mintpad.write.addVotingPoints([[alice.account.address, bob.account.address], [100]], {
-            account: owner.account
+            account: signer.account
           }),
           /Mintpad__InvalidParams\("length mismatch"\)/
         );
@@ -255,11 +263,11 @@ describe("Mintpad", async function () {
 
     describe("setVotingPoint", function () {
       beforeEach(async function () {
-        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.startRollOver({ account: signer.account });
       });
 
-      it("should allow owner to set voting point for a user", async function () {
-        await mintpad.write.setVotingPoint([alice.account.address, 150], { account: owner.account });
+      it("should allow signer to set voting point for a user", async function () {
+        await mintpad.write.setVotingPoint([alice.account.address, 150], { account: signer.account });
 
         const dayCounter = await mintpad.read.dayCounter();
         const alicePoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
@@ -271,7 +279,7 @@ describe("Mintpad", async function () {
         const dayCounter = await mintpad.read.dayCounter();
 
         await viem.assertions.emitWithArgs(
-          mintpad.write.setVotingPoint([alice.account.address, 100], { account: owner.account }),
+          mintpad.write.setVotingPoint([alice.account.address, 100], { account: signer.account }),
           mintpad,
           "VotingPointsAdded",
           [dayCounter, 1n, 100n]
@@ -279,12 +287,12 @@ describe("Mintpad", async function () {
       });
 
       it("should emit VotingPointsAdded event with positive delta when increasing", async function () {
-        await mintpad.write.setVotingPoint([alice.account.address, 100], { account: owner.account });
+        await mintpad.write.setVotingPoint([alice.account.address, 100], { account: signer.account });
 
         const dayCounter = await mintpad.read.dayCounter();
 
         await viem.assertions.emitWithArgs(
-          mintpad.write.setVotingPoint([alice.account.address, 150], { account: owner.account }),
+          mintpad.write.setVotingPoint([alice.account.address, 150], { account: signer.account }),
           mintpad,
           "VotingPointsAdded",
           [dayCounter, 1n, 50n] // 150 - 100
@@ -292,12 +300,12 @@ describe("Mintpad", async function () {
       });
 
       it("should emit VotingPointsAdded event with negative delta when decreasing", async function () {
-        await mintpad.write.setVotingPoint([alice.account.address, 100], { account: owner.account });
+        await mintpad.write.setVotingPoint([alice.account.address, 100], { account: signer.account });
 
         const dayCounter = await mintpad.read.dayCounter();
 
         await viem.assertions.emitWithArgs(
-          mintpad.write.setVotingPoint([alice.account.address, 60], { account: owner.account }),
+          mintpad.write.setVotingPoint([alice.account.address, 60], { account: signer.account }),
           mintpad,
           "VotingPointsAdded",
           [dayCounter, 1n, -40n] // 60 - 100
@@ -305,8 +313,8 @@ describe("Mintpad", async function () {
       });
 
       it("should replace existing voting point (not add)", async function () {
-        await mintpad.write.addVotingPoints([[alice.account.address], [100]], { account: owner.account });
-        await mintpad.write.setVotingPoint([alice.account.address, 50], { account: owner.account });
+        await mintpad.write.addVotingPoints([[alice.account.address], [100]], { account: signer.account });
+        await mintpad.write.setVotingPoint([alice.account.address, 50], { account: signer.account });
 
         const dayCounter = await mintpad.read.dayCounter();
         const alicePoints = await mintpad.read.dailyUserVotingPoint([dayCounter, alice.account.address]);
@@ -314,18 +322,18 @@ describe("Mintpad", async function () {
         assert.equal(alicePoints, 50); // Should be 50, not 150
       });
 
-      it("should revert when non-owner tries to set voting point", async function () {
+      it("should revert when non-signer tries to set voting point", async function () {
         await assert.rejects(
           mintpad.write.setVotingPoint([alice.account.address, 100], { account: alice.account }),
-          /OwnableUnauthorizedAccount/
+          /Mintpad__PermissionDenied/
         );
       });
 
       it("should revert when not in roll-over", async function () {
-        await mintpad.write.endRollOver([1000], { account: owner.account });
+        await mintpad.write.endRollOver([1000], { account: signer.account });
 
         await assert.rejects(
-          mintpad.write.setVotingPoint([alice.account.address, 100], { account: owner.account }),
+          mintpad.write.setVotingPoint([alice.account.address, 100], { account: signer.account }),
           /Mintpad__RollOverNotInProgress/
         );
       });
@@ -370,9 +378,9 @@ describe("Mintpad", async function () {
       });
     }); // refundHUNT
 
-    describe("setDayCounter", function () {
+    describe("emergencySetDayCounter", function () {
       it("should allow owner to set day counter", async function () {
-        await mintpad.write.setDayCounter([10], { account: owner.account });
+        await mintpad.write.emergencySetDayCounter([10], { account: owner.account });
 
         const dayCounter = await mintpad.read.dayCounter();
         assert.equal(dayCounter, 10n);
@@ -380,21 +388,21 @@ describe("Mintpad", async function () {
 
       it("should revert when non-owner tries to set day counter", async function () {
         await assert.rejects(
-          mintpad.write.setDayCounter([10], { account: alice.account }),
+          mintpad.write.emergencySetDayCounter([10], { account: alice.account }),
           /OwnableUnauthorizedAccount/
         );
       });
-    }); // setDayCounter
+    }); // emergencySetDayCounter
   }); // Admin functions
 
   describe("Vote function", function () {
     // Helper to set up a day with voting points
     async function setupDay(alicePoints = 1000, bobPoints = 500) {
-      await mintpad.write.startRollOver({ account: owner.account });
+      await mintpad.write.startRollOver({ account: signer.account });
       const users = [alice.account.address, bob.account.address];
       const points = [alicePoints, bobPoints];
-      await mintpad.write.addVotingPoints([users, points], { account: owner.account });
-      await mintpad.write.endRollOver([10000], { account: owner.account }); // 10000 HUNT reward
+      await mintpad.write.addVotingPoints([users, points], { account: signer.account });
+      await mintpad.write.endRollOver([10000], { account: signer.account }); // 10000 HUNT reward
     }
 
     describe("Parameter validation", function () {
@@ -432,7 +440,7 @@ describe("Mintpad", async function () {
       });
 
       it("should revert when voting during roll-over", async function () {
-        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.startRollOver({ account: signer.account });
 
         await assert.rejects(
           mintpad.write.vote([TEST_TOKEN, 100], { account: alice.account }),
@@ -537,17 +545,17 @@ describe("Mintpad", async function () {
         assert.equal(day1Stats[4], 2); // votingCount for day 1
 
         // Start Day 2
-        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.startRollOver({ account: signer.account });
         await mintpad.write.addVotingPoints(
           [
             [alice.account.address, bob.account.address],
             [1000, 500]
           ],
           {
-            account: owner.account
+            account: signer.account
           }
         );
-        await mintpad.write.endRollOver([1000], { account: owner.account });
+        await mintpad.write.endRollOver([1000], { account: signer.account });
 
         // Day 2: 1 vote
         dayCounter = await mintpad.read.dayCounter();
@@ -574,50 +582,50 @@ describe("Mintpad", async function () {
     // Helper to set up multiple days with voting
     async function setupMultipleDays() {
       // Day 1
-      await mintpad.write.startRollOver({ account: owner.account });
+      await mintpad.write.startRollOver({ account: signer.account });
       await mintpad.write.addVotingPoints(
         [
           [alice.account.address, bob.account.address],
           [1000, 500]
         ],
         {
-          account: owner.account
+          account: signer.account
         }
       );
-      await mintpad.write.endRollOver([DAY_1_HUNT_REWARD], { account: owner.account });
+      await mintpad.write.endRollOver([DAY_1_HUNT_REWARD], { account: signer.account });
 
       // Alice votes 800 points on Day 1
       await mintpad.write.vote([TEST_TOKEN, ALICE_VOTINGS[0]], { account: alice.account });
 
       // Day 2
-      await mintpad.write.startRollOver({ account: owner.account });
+      await mintpad.write.startRollOver({ account: signer.account });
       await mintpad.write.addVotingPoints(
         [
           [alice.account.address, bob.account.address],
           [1000, 500]
         ],
         {
-          account: owner.account
+          account: signer.account
         }
       );
-      await mintpad.write.endRollOver([DAY_2_HUNT_REWARD], { account: owner.account });
+      await mintpad.write.endRollOver([DAY_2_HUNT_REWARD], { account: signer.account });
 
       // Alice votes 600 points, Bob votes 400 points on Day 2
       await mintpad.write.vote([TEST_TOKEN, ALICE_VOTINGS[1]], { account: alice.account });
       await mintpad.write.vote([TEST_TOKEN, BOB_VOTINGS[1]], { account: bob.account });
 
       // Day 3 (current day, no claims yet)
-      await mintpad.write.startRollOver({ account: owner.account });
+      await mintpad.write.startRollOver({ account: signer.account });
       await mintpad.write.addVotingPoints(
         [
           [alice.account.address, bob.account.address],
           [1000, 500]
         ],
         {
-          account: owner.account
+          account: signer.account
         }
       );
-      await mintpad.write.endRollOver([1234], { account: owner.account });
+      await mintpad.write.endRollOver([1234], { account: signer.account });
     }
 
     describe("Parameter validation", function () {
@@ -648,7 +656,7 @@ describe("Mintpad", async function () {
       });
 
       it("should revert when claiming during roll-over", async function () {
-        await mintpad.write.startRollOver({ account: owner.account });
+        await mintpad.write.startRollOver({ account: signer.account });
 
         await assert.rejects(
           mintpad.write.claim([TEST_TOKEN, 100n * 10n ** 18n, 0], { account: alice.account }),
@@ -658,7 +666,7 @@ describe("Mintpad", async function () {
 
       it("should revert when user has nothing to claim", async function () {
         // Bob never voted for TEST_TOKEN on Day 1
-        await mintpad.write.setDayCounter([1], { account: owner.account });
+        await mintpad.write.emergencySetDayCounter([1], { account: owner.account });
 
         await assert.rejects(
           mintpad.write.claim([TEST_TOKEN, 100n * 10n ** 18n, 0], { account: bob.account }),
@@ -896,17 +904,17 @@ describe("Mintpad", async function () {
         assert.equal(day3Stats[5], day3InitialClaimCount + 1); // claimCount for day 3 should increment
 
         // Setup Day 4 with new votes
-        await mintpad.write.startRollOver({ account: owner.account });
-        await mintpad.write.addVotingPoints([[bob.account.address], [1000]], { account: owner.account });
-        await mintpad.write.endRollOver([1500], { account: owner.account });
+        await mintpad.write.startRollOver({ account: signer.account });
+        await mintpad.write.addVotingPoints([[bob.account.address], [1000]], { account: signer.account });
+        await mintpad.write.endRollOver([1500], { account: signer.account });
 
         // Bob votes on Day 4
         await mintpad.write.vote([TEST_TOKEN, 500], { account: bob.account });
 
         // Setup Day 5
-        await mintpad.write.startRollOver({ account: owner.account });
-        await mintpad.write.addVotingPoints([[bob.account.address], [1000]], { account: owner.account });
-        await mintpad.write.endRollOver([1600], { account: owner.account });
+        await mintpad.write.startRollOver({ account: signer.account });
+        await mintpad.write.addVotingPoints([[bob.account.address], [1000]], { account: signer.account });
+        await mintpad.write.endRollOver([1600], { account: signer.account });
 
         const day5 = await mintpad.read.dayCounter();
 
@@ -971,14 +979,14 @@ describe("Mintpad", async function () {
           await setupMultipleDays();
 
           // Set day counter to 32 (so votes before day 2 are expired)
-          await mintpad.write.setDayCounter([32], { account: owner.account });
+          await mintpad.write.emergencySetDayCounter([32], { account: owner.account });
           const [claimableHunt] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
 
           // Only Day 2 vote should be claimable (Day 1 is > 30 days ago)
           assert.equal(claimableHunt, DAILY_ALICE_REWARDS_EXPECTED[1]);
 
           // Set day counter to 33 (so votes before day 3 are expired)
-          await mintpad.write.setDayCounter([33], { account: owner.account });
+          await mintpad.write.emergencySetDayCounter([33], { account: owner.account });
           const [claimableHunt1] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
 
           // All expired

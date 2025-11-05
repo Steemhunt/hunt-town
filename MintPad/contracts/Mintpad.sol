@@ -13,13 +13,15 @@ contract Mintpad is Ownable {
     error Mintpad__NothingToClaim();
     error Mintpad__TooMuchLeftOver(uint256 actualHuntSpent);
     error Mintpad__TotalPointsUnderflow();
+    error Mintpad__PermissionDenied();
 
     // MARK: - Constants
     IERC20 private constant HUNT = IERC20(0x37f0c2915CeCC7e977183B8543Fc0864d03E064C);
-    IMCV2_Bond public immutable BOND;
+    IMCV2_Bond public constant BOND = IMCV2_Bond(0xc5a076cad94176c2996B32d8466Be1cE757FAa27);
+    uint256 public constant VOTE_EXPIRATION_DAYS = 30;
+    address public signer;
 
     // MARK: - State Variables
-    uint256 public constant VOTE_EXPIRATION_DAYS = 30;
     uint256 public dayCounter;
     bool public isRollOverInProgress;
 
@@ -56,15 +58,12 @@ contract Mintpad is Ownable {
     );
 
     // MARK: - Constructor
-    constructor(address bond) Ownable(msg.sender) {
-        // TODO: Add a separate signer (hot key) for daily operations
-
-        if (bond == address(0)) revert Mintpad__InvalidParams("bond");
-
-        BOND = IMCV2_Bond(bond);
+    constructor(address signerAddress) Ownable(msg.sender) {
+        if (signerAddress == address(0)) revert Mintpad__InvalidParams("zero address");
+        signer = signerAddress;
 
         // Pre-approve HUNT to Bond for minting
-        HUNT.approve(bond, type(uint256).max);
+        HUNT.approve(address(BOND), type(uint256).max);
     }
 
     // MARK: - Modifiers
@@ -84,11 +83,17 @@ contract Mintpad is Ownable {
         _;
     }
 
-    // MARK: - Admin Functions
+    modifier _onlySigner() {
+        if (msg.sender != signer) revert Mintpad__PermissionDenied();
+        _;
+    }
+
+    // MARK: - Signer Functions called by server for daily roll-over operations
+
     /**
      * @dev Starts the roll-over process.
      */
-    function startRollOver() external onlyOwner {
+    function startRollOver() external _onlySigner {
         isRollOverInProgress = true;
 
         ++dayCounter;
@@ -97,7 +102,7 @@ contract Mintpad is Ownable {
     /**
      * @dev Ends the roll-over process.
      */
-    function endRollOver(uint24 totalHuntReward) external onlyOwner _whenRollingOver {
+    function endRollOver(uint24 totalHuntReward) external _onlySigner _whenRollingOver {
         dailyStats[dayCounter].totalHuntReward = totalHuntReward; // Set to the totalHuntReward for the day
 
         isRollOverInProgress = false;
@@ -111,7 +116,7 @@ contract Mintpad is Ownable {
     function addVotingPoints(
         address[] calldata users,
         uint32[] calldata votingPoints
-    ) external onlyOwner _whenRollingOver {
+    ) external _onlySigner _whenRollingOver {
         uint256 updateCount = users.length;
         if (updateCount != votingPoints.length) revert Mintpad__InvalidParams("length mismatch");
 
@@ -137,7 +142,7 @@ contract Mintpad is Ownable {
      * @param user The address of the user to set the voting point for.
      * @param newVotingPoint The new voting point to set.
      */
-    function setVotingPoint(address user, uint32 newVotingPoint) external onlyOwner _whenRollingOver {
+    function setVotingPoint(address user, uint32 newVotingPoint) external _onlySigner _whenRollingOver {
         uint256 day = dayCounter;
         uint32 oldVotingPoint = dailyUserVotingPoint[day][user];
 
@@ -161,11 +166,12 @@ contract Mintpad is Ownable {
     }
 
     // MARK: - Admin Emergency Functions
+
     /**
      * @dev Sets the current day counter (for emergency troubleshooting only).
      * @param day The day to set.
      */
-    function setDayCounter(uint256 day) external onlyOwner {
+    function emergencySetDayCounter(uint256 day) external onlyOwner {
         dayCounter = day;
     }
 
@@ -181,6 +187,7 @@ contract Mintpad is Ownable {
     }
 
     // MARK: - Write Functions (User)
+
     /**
      * @dev Votes for a specific token using allotted voting points.
      * @param token The address of the child token to vote for.
