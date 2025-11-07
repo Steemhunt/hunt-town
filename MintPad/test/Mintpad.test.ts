@@ -264,7 +264,8 @@ describe("Mintpad", async function () {
       const alicePoints = await mintpad.read.dailyUserVotingPoint([day, alice.account.address]);
       const stats = await mintpad.read.dailyStats([day]);
 
-      assert.equal(alicePoints, votingPoint);
+      assert.equal(alicePoints[0], votingPoint); // activated
+      assert.equal(alicePoints[1], votingPoint); // left
       assert.equal(stats[0], votingPoint); // totalVotingPointGiven
     });
 
@@ -320,7 +321,8 @@ describe("Mintpad", async function () {
       await mintpad.write.activateVotingPoint([votingPoint, signature1], { account: alice.account });
 
       const alicePointsDay1 = await mintpad.read.dailyUserVotingPoint([day1, alice.account.address]);
-      assert.equal(alicePointsDay1, votingPoint);
+      assert.equal(alicePointsDay1[0], votingPoint); // activated
+      assert.equal(alicePointsDay1[1], votingPoint); // left
     });
   }); // activateVotingPoint
 
@@ -344,7 +346,8 @@ describe("Mintpad", async function () {
       const tokenVotes = await mintpad.read.dailyUserTokenVotes([day, alice.account.address, TEST_TOKEN]);
       const stats = await mintpad.read.dailyStats([day]);
 
-      assert.equal(remainingPoints, 500);
+      assert.equal(remainingPoints[0], 1000); // activated - Original activated amount
+      assert.equal(remainingPoints[1], 500); // left - Remaining after vote
       assert.equal(tokenVotes, voteAmount);
       assert.equal(stats[1], voteAmount); // totalVotingPointSpent
       assert.equal(stats[2], 1); // votingCount
@@ -361,7 +364,8 @@ describe("Mintpad", async function () {
       const tokenVotes = await mintpad.read.dailyUserTokenVotes([day, alice.account.address, TEST_TOKEN]);
       const stats = await mintpad.read.dailyStats([day]);
 
-      assert.equal(remainingPoints, 300);
+      assert.equal(remainingPoints[0], 1000); // activated - Original activated amount
+      assert.equal(remainingPoints[1], 300); // left - Remaining after votes
       assert.equal(tokenVotes, 700);
       assert.equal(stats[1], 700); // totalVotingPointSpent
       assert.equal(stats[2], 2); // votingCount
@@ -650,6 +654,41 @@ describe("Mintpad", async function () {
       await time.increase(Number(SECONDS_PER_DAY * 5n));
       const currentDay = await mintpad.read.getCurrentDay();
       assert.equal(currentDay, 5n);
+    });
+
+    it("should align day boundaries with UTC midnight", async function () {
+      // Get current blockchain time and calculate a mid-day timestamp
+      const currentTime = BigInt(await time.latest());
+
+      // Calculate the next UTC midnight after current time
+      const currentUtcDay = currentTime / SECONDS_PER_DAY;
+      const nextMidnight = (currentUtcDay + 1n) * SECONDS_PER_DAY;
+
+      // Set deployment time to 6 hours (21600 seconds) before next midnight
+      const deploymentTimestamp = nextMidnight - 21600n;
+      await time.setNextBlockTimestamp(Number(deploymentTimestamp));
+
+      // @ts-ignore - Constructor signature updated
+      const testMintpad = await viem.deployContract("Mintpad", [signer.account.address, DAILY_HUNT_REWARD]);
+
+      // Should be day 0 immediately after deployment (deployed at 18:00 UTC)
+      let currentDay = await testMintpad.read.getCurrentDay();
+      assert.equal(currentDay, 0n);
+
+      // Advance to 1 second before midnight - should still be day 0
+      await time.increase(21600 - 1); // 6 hours minus 1 second
+      currentDay = await testMintpad.read.getCurrentDay();
+      assert.equal(currentDay, 0n, "Should still be day 0 one second before midnight");
+
+      // Advance 1 more second to reach exactly midnight - should now be day 1
+      await time.increase(1);
+      currentDay = await testMintpad.read.getCurrentDay();
+      assert.equal(currentDay, 1n, "Should be day 1 at UTC midnight");
+
+      // Advance another full day (86400 seconds) - should be day 2
+      await time.increase(Number(SECONDS_PER_DAY));
+      currentDay = await testMintpad.read.getCurrentDay();
+      assert.equal(currentDay, 2n, "Should be day 2 after another full UTC day");
     });
   }); // getCurrentDay
 }); // Mintpad

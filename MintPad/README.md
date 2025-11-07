@@ -12,7 +12,10 @@ npx hardhat test
 
 ```sh
 npx hardhat keystore set BASE_PRIVATE_KEY
-npx hardhat ignition deploy ignition/modules/Mintpad.ts --network base --parameters ignition/prod-params.json --verify --reset
+npx hardhat ignition deploy ignition/modules/Mintpad.ts --network base --verify --reset
+
+# if verification failed
+npx hardhat ignition verify chain-8453 --network base
 ```
 
 ## 🔵 Deployed Contracts on Base

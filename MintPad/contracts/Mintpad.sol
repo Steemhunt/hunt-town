@@ -22,7 +22,7 @@ contract Mintpad is Ownable {
     uint256 public constant VOTE_EXPIRATION_DAYS = 30;
     uint256 private constant SECONDS_PER_DAY = 86400;
     uint256 private constant MIN_CLAIM_EFFICIENCY_PERCENT = 98; // 98% minimum efficiency
-    uint256 private immutable DEPLOYMENT_TIMESTAMP;
+    uint256 private immutable DEPLOYMENT_DAY_TIMESTAMP;
 
     // EIP-712 Domain
     bytes32 private constant DOMAIN_TYPEHASH =
@@ -36,7 +36,6 @@ contract Mintpad is Ownable {
     uint256 public dailyHuntReward; // Daily HUNT reward pool (in Wei)
 
     /// @dev Daily statistics for vote and claim tracking
-    /// @notice All uint types are optimized for gas-efficient storage packing (256 bits total)
     struct DailyStats {
         uint32 totalVotingPointGiven; // Total voting points allocated for the day
         uint32 totalVotingPointSpent; // Total voting points spent for the day
@@ -44,13 +43,16 @@ contract Mintpad is Ownable {
         uint32 claimCount; // Number of claim transactions for the day
         uint88 totalHuntClaimed; // Total HUNT claimed for the day (in Wei)
     }
-
     /// @notice Maps day => DailyStats
     mapping(uint256 => DailyStats) public dailyStats;
 
-    /// @notice Maps day => user => remaining voting points
-    /// @dev Activated by user with signature, deducted on vote
-    mapping(uint256 => mapping(address => uint32)) public dailyUserVotingPoint;
+    /// @dev Daily voting points for each user. Activated by user with signature, deducted on vote
+    struct VotingPoint {
+        uint32 activated;
+        uint32 left;
+    }
+    /// @notice Maps day => user => voting points (activated and remaining)
+    mapping(uint256 => mapping(address => VotingPoint)) public dailyUserVotingPoint;
 
     /// @notice Maps day => user => token => voting points spent
     mapping(uint256 => mapping(address => mapping(address => uint32))) public dailyUserTokenVotes;
@@ -78,7 +80,7 @@ contract Mintpad is Ownable {
      * @notice Initializes the Mintpad contract
      * @param signerAddress Address authorized to sign voting point activations
      * @param initialDailyHuntReward Initial daily HUNT reward pool (in Wei)
-     * @dev Sets deployment timestamp as day 0 and pre-approves HUNT for BOND contract
+     * @dev Sets deployment day timestamp to UTC midnight (00:00) of deployment day for consistent day boundaries
      */
     constructor(address signerAddress, uint256 initialDailyHuntReward) Ownable(msg.sender) {
         if (signerAddress == address(0)) revert Mintpad__InvalidParams("zero address");
@@ -86,7 +88,8 @@ contract Mintpad is Ownable {
 
         signer = signerAddress;
         dailyHuntReward = initialDailyHuntReward;
-        DEPLOYMENT_TIMESTAMP = block.timestamp;
+        // Set to start of deployment day (UTC midnight 00:00) for consistent day boundaries
+        DEPLOYMENT_DAY_TIMESTAMP = (block.timestamp / SECONDS_PER_DAY) * SECONDS_PER_DAY;
 
         // Initialize EIP-712 domain separator
         DOMAIN_SEPARATOR = keccak256(
@@ -155,12 +158,12 @@ contract Mintpad is Ownable {
 
     /**
      * @notice Returns the current day number since contract deployment
-     * @return Current day (0 = deployment day, increments every 86400 seconds)
-     * @dev Day boundaries are based on elapsed seconds, not UTC timezone
+     * @return Current day (0 = deployment day, increments at UTC midnight 00:00)
+     * @dev Day boundaries align with UTC timezone (00:00-23:59:59)
      * @dev Voting is allowed only on the current day; claims are available starting the next day
      */
     function getCurrentDay() public view returns (uint256) {
-        return (block.timestamp - DEPLOYMENT_TIMESTAMP) / SECONDS_PER_DAY;
+        return (block.timestamp - DEPLOYMENT_DAY_TIMESTAMP) / SECONDS_PER_DAY;
     }
 
     // MARK: - Write Functions (User)
@@ -178,7 +181,7 @@ contract Mintpad is Ownable {
         uint256 day = getCurrentDay();
 
         // Ensure user hasn't already activated voting points for today
-        if (dailyUserVotingPoint[day][user] > 0) {
+        if (dailyUserVotingPoint[day][user].activated > 0) {
             revert Mintpad__AlreadyActivated();
         }
 
@@ -191,8 +194,8 @@ contract Mintpad is Ownable {
             revert Mintpad__InvalidSignature();
         }
 
-        // Activate voting points for user
-        dailyUserVotingPoint[day][user] = votingPoint;
+        // Activate voting points for user (set both activated and left to the same initial value)
+        dailyUserVotingPoint[day][user] = VotingPoint({activated: votingPoint, left: votingPoint});
 
         // Update daily statistics
         unchecked {
@@ -217,14 +220,14 @@ contract Mintpad is Ownable {
         uint256 day = getCurrentDay();
 
         // Check user's remaining voting points
-        uint32 remainingPoints = dailyUserVotingPoint[day][user];
+        uint32 remainingPoints = dailyUserVotingPoint[day][user].left;
         if (voteAmount > remainingPoints) {
             revert Mintpad__InsufficientVotingPoints();
         }
 
         unchecked {
-            // Update user voting status
-            dailyUserVotingPoint[day][user] = remainingPoints - voteAmount;
+            // Update user voting status (deduct from left, keep activated as original)
+            dailyUserVotingPoint[day][user].left = remainingPoints - voteAmount;
             dailyUserTokenVotes[day][user][token] += voteAmount;
 
             // Update daily stats (gas optimization: single SSTORE with explicit packing)
