@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 contract Mintpad is Ownable {
     using SafeERC20 for IERC20;
@@ -20,7 +21,8 @@ contract Mintpad is Ownable {
     IERC20 private constant HUNT = IERC20(0x37f0c2915CeCC7e977183B8543Fc0864d03E064C);
     IMCV2_Bond public constant BOND = IMCV2_Bond(0xc5a076cad94176c2996B32d8466Be1cE757FAa27);
     uint256 public constant VOTE_EXPIRATION_DAYS = 30;
-    uint256 private constant SECONDS_PER_DAY = 86400;
+    // uint256 private constant SECONDS_PER_DAY = 86400;
+    uint256 private constant SECONDS_PER_DAY = 600; // 10 minutes for testing
     uint256 private constant MIN_CLAIM_EFFICIENCY_PERCENT = 98; // 98% minimum efficiency
     uint256 private immutable DEPLOYMENT_DAY_TIMESTAMP;
 
@@ -109,7 +111,10 @@ contract Mintpad is Ownable {
     // MARK: - Modifiers
     modifier _validChildToken(address token) {
         if (token == address(0)) revert Mintpad__InvalidParams("zero address");
-        if (!BOND.exists(token)) revert Mintpad__InvalidParams("not child token");
+        if (IERC20Metadata(token).decimals() != 18) revert Mintpad__InvalidParams("not an ERC20 token");
+        (, , , , address reserveToken, ) = BOND.tokenBond(token);
+        if (reserveToken != address(HUNT)) revert Mintpad__InvalidParams("not HUNT child token");
+
         _;
     }
 
@@ -249,11 +254,7 @@ contract Mintpad is Ownable {
      * NOTE: Reward calculation uses the CURRENT dailyHuntReward value for all past days.
      * If the owner changes the reward amount, your claimable rewards will change accordingly.
      */
-    function claim(
-        address token,
-        uint256 tokensToMint,
-        uint256 donationBp
-    ) external _validChildToken(token) returns (uint256 actualHuntSpent) {
+    function claim(address token, uint256 tokensToMint, uint256 donationBp) external returns (uint256 actualHuntSpent) {
         if (tokensToMint == 0) revert Mintpad__InvalidParams("tokensToMint must be greater than 0");
         if (donationBp > 10000) revert Mintpad__InvalidParams("donationBp cannot exceed 10000");
 
@@ -396,8 +397,6 @@ contract Mintpad is Ownable {
  * @dev Minimal interface containing only the functions used by Mintpad
  */
 interface IMCV2_Bond {
-    function exists(address token) external view returns (bool);
-
     function mint(
         address token,
         uint256 tokensToMint,

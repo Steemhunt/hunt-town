@@ -11,7 +11,8 @@ const HUNT_TOKEN = "0x37f0c2915CeCC7e977183B8543Fc0864d03E064C";
 const TEST_TOKEN = "0xDF2B673Ec06d210C8A8Be89441F8de60B5C679c9"; // SIGNET
 const INITIAL_HUNT_BALANCE = 10_000n * 10n ** 18n;
 const DAILY_HUNT_REWARD = 1000n * 10n ** 18n; // 1000 HUNT per day in Wei
-const SECONDS_PER_DAY = 86400n;
+// const SECONDS_PER_DAY = 86400n;
+const SECONDS_PER_DAY = 600n; // TODO: 10 minutes for testing
 
 describe("Mintpad", async function () {
   const connection = await network.connect("baseFork");
@@ -397,9 +398,10 @@ describe("Mintpad", async function () {
         /Mintpad__InvalidParams\("zero address"\)/
       );
 
+      // Test with HUNT token itself (valid ERC20 with 18 decimals but not a child token)
       await assert.rejects(
-        mintpad.write.vote(["0x0000000000000000000000000000000000000001", 100], { account: alice.account }),
-        /Mintpad__InvalidParams\("not child token"\)/
+        mintpad.write.vote([HUNT_TOKEN, 100], { account: alice.account }),
+        /Mintpad__InvalidParams\("not HUNT child token"\)/
       );
     });
   }); // vote
@@ -522,10 +524,12 @@ describe("Mintpad", async function () {
       );
     });
 
-    it("should revert with invalid token", async function () {
+    it("should revert with nothing to claim", async function () {
+      // Claim function no longer validates token upfront (no _validChildToken modifier)
+      // It will revert with NothingToClaim when there are no votes for the token
       await assert.rejects(
-        mintpad.write.claim([ZERO_ADDRESS, 100n * 10n ** 18n, 0], { account: alice.account }),
-        /Mintpad__InvalidParams\("zero address"\)/
+        mintpad.write.claim([TEST_TOKEN, 100n * 10n ** 18n, 0], { account: alice.account }),
+        /Mintpad__NothingToClaim/
       );
     });
 
