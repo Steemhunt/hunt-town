@@ -21,8 +21,7 @@ contract Mintpad is Ownable {
     IERC20 private constant HUNT = IERC20(0x37f0c2915CeCC7e977183B8543Fc0864d03E064C);
     IMCV2_Bond public constant BOND = IMCV2_Bond(0xc5a076cad94176c2996B32d8466Be1cE757FAa27);
     uint256 public constant VOTE_EXPIRATION_DAYS = 30;
-    // uint256 private constant SECONDS_PER_DAY = 86400;
-    uint256 private constant SECONDS_PER_DAY = 600; // 10 minutes for testing
+    uint256 private constant SECONDS_PER_DAY = 86400;
     uint256 private constant MIN_CLAIM_EFFICIENCY_PERCENT = 98; // 98% minimum efficiency
     uint256 private immutable DEPLOYMENT_DAY_TIMESTAMP;
 
@@ -325,6 +324,24 @@ contract Mintpad is Ownable {
     }
 
     /**
+     * @notice Calculates claimable HUNT for multiple tokens
+     * @param user The user's address
+     * @param tokens Array of token addresses
+     * @return huntAmounts Array of claimable HUNT amounts
+     * @return endDays Array of end days for each token
+     */
+    function getClaimableHuntMultiple(
+        address user,
+        address[] calldata tokens
+    ) external view returns (uint256[] memory huntAmounts, uint256[] memory endDays) {
+        huntAmounts = new uint256[](tokens.length);
+        endDays = new uint256[](tokens.length);
+        for (uint256 i = 0; i < tokens.length; i++) {
+            (huntAmounts[i], endDays[i]) = _getClaimableHunt(user, tokens[i]);
+        }
+    }
+
+    /**
      * @dev Internal helper to calculate claimable HUNT for a user-token pair.
      * Calculates rewards from unclaimed days within the 30-day expiration window.
      * NOTE: This function uses the CURRENT dailyHuntReward value for calculating ALL past days.
@@ -386,6 +403,14 @@ contract Mintpad is Ownable {
         }
 
         return (totalHuntToClaim, endDay);
+    }
+
+    /**
+     * @notice Returns the deployment day timestamp (UTC midnight)
+     * @return The timestamp used as day 0 reference
+     */
+    function getDeploymentDayTimestamp() external view returns (uint256) {
+        return DEPLOYMENT_DAY_TIMESTAMP;
     }
 }
 

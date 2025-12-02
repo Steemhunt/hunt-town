@@ -11,8 +11,7 @@ const HUNT_TOKEN = "0x37f0c2915CeCC7e977183B8543Fc0864d03E064C";
 const TEST_TOKEN = "0xDF2B673Ec06d210C8A8Be89441F8de60B5C679c9"; // SIGNET
 const INITIAL_HUNT_BALANCE = 10_000n * 10n ** 18n;
 const DAILY_HUNT_REWARD = 1000n * 10n ** 18n; // 1000 HUNT per day in Wei
-// const SECONDS_PER_DAY = 86400n;
-const SECONDS_PER_DAY = 600n; // TODO: 10 minutes for testing
+const SECONDS_PER_DAY = 86400n;
 
 describe("Mintpad", async function () {
   const connection = await network.connect("baseFork");
@@ -641,6 +640,165 @@ describe("Mintpad", async function () {
       );
     });
   }); // claim
+
+  describe("getDeploymentDayTimestamp", function () {
+    it("should return UTC midnight of deployment day", async function () {
+      const deploymentTimestamp = await mintpad.read.getDeploymentDayTimestamp();
+
+      // Should be aligned to UTC midnight (divisible by 86400)
+      assert.equal(deploymentTimestamp % SECONDS_PER_DAY, 0n);
+    });
+
+    it("should be consistent with getCurrentDay calculation", async function () {
+      const deploymentTimestamp = await mintpad.read.getDeploymentDayTimestamp();
+      const currentDay = await mintpad.read.getCurrentDay();
+
+      // Get current block timestamp
+      const currentTimestamp = BigInt(await time.latest());
+
+      // Verify the relationship: currentDay = (currentTimestamp - deploymentTimestamp) / SECONDS_PER_DAY
+      const expectedDay = (currentTimestamp - deploymentTimestamp) / SECONDS_PER_DAY;
+      assert.equal(currentDay, expectedDay);
+    });
+
+    it("should remain constant after time passes", async function () {
+      const initialTimestamp = await mintpad.read.getDeploymentDayTimestamp();
+
+      // Move forward 5 days
+      await time.increase(Number(SECONDS_PER_DAY * 5n));
+
+      const laterTimestamp = await mintpad.read.getDeploymentDayTimestamp();
+      assert.equal(initialTimestamp, laterTimestamp);
+    });
+  }); // getDeploymentDayTimestamp
+
+  describe("getClaimableHuntMultiple", function () {
+    // Use another verified HUNT child token on Base: MT
+    const TEST_TOKEN_2 = "0xFf45161474C39cB00699070Dd49582e417b57a7E";
+
+    async function activatePoints(user: any, points: number) {
+      const day = await mintpad.read.getCurrentDay();
+      const signature = await signVotingPoint(mintpad.address, user.account.address, day, points, signer);
+      await mintpad.write.activateVotingPoint([points, signature], { account: user.account });
+    }
+
+    it("should return claimable amounts for multiple tokens", async function () {
+      // Day 0: Alice votes for both tokens
+      await activatePoints(alice, 1000);
+      await mintpad.write.vote([TEST_TOKEN, 400], { account: alice.account });
+      await mintpad.write.vote([TEST_TOKEN_2, 300], { account: alice.account });
+
+      // Move to Day 1 so we can query claimable
+      await time.increase(Number(SECONDS_PER_DAY));
+
+      const [huntAmounts, endDays] = await mintpad.read.getClaimableHuntMultiple([
+        alice.account.address,
+        [TEST_TOKEN, TEST_TOKEN_2]
+      ]);
+
+      // Day 0: Total votes = 700, dailyHuntReward = 1000 HUNT
+      // TEST_TOKEN: 400/700 * 1000 ≈ 571.42 HUNT
+      // TEST_TOKEN_2: 300/700 * 1000 ≈ 428.57 HUNT
+      const expectedToken1 = (400n * DAILY_HUNT_REWARD) / 700n;
+      const expectedToken2 = (300n * DAILY_HUNT_REWARD) / 700n;
+
+      assert.equal(huntAmounts.length, 2);
+      assert.equal(endDays.length, 2);
+      assert.equal(huntAmounts[0], expectedToken1);
+      assert.equal(huntAmounts[1], expectedToken2);
+      assert.equal(endDays[0], 0n);
+      assert.equal(endDays[1], 0n);
+    });
+
+    it("should return zeros for tokens with no votes", async function () {
+      // Day 0: Alice votes for only TEST_TOKEN
+      await activatePoints(alice, 1000);
+      await mintpad.write.vote([TEST_TOKEN, 500], { account: alice.account });
+
+      // Move to Day 1
+      await time.increase(Number(SECONDS_PER_DAY));
+
+      const [huntAmounts, endDays] = await mintpad.read.getClaimableHuntMultiple([
+        alice.account.address,
+        [TEST_TOKEN, TEST_TOKEN_2]
+      ]);
+
+      // TEST_TOKEN: 500/500 * 1000 = 1000 HUNT
+      // TEST_TOKEN_2: 0 (no votes)
+      assert.equal(huntAmounts[0], DAILY_HUNT_REWARD);
+      assert.equal(huntAmounts[1], 0n);
+      assert.equal(endDays[0], 0n);
+      assert.equal(endDays[1], 0n);
+    });
+
+    it("should handle empty token array", async function () {
+      const [huntAmounts, endDays] = await mintpad.read.getClaimableHuntMultiple([alice.account.address, []]);
+
+      assert.equal(huntAmounts.length, 0);
+      assert.equal(endDays.length, 0);
+    });
+
+    it("should return consistent results with individual getClaimableHunt calls", async function () {
+      // Day 0: Alice votes for both tokens
+      await activatePoints(alice, 1000);
+      await mintpad.write.vote([TEST_TOKEN, 600], { account: alice.account });
+      await mintpad.write.vote([TEST_TOKEN_2, 200], { account: alice.account });
+
+      // Move to Day 1
+      await time.increase(Number(SECONDS_PER_DAY));
+
+      // Get results from batch call
+      const [huntAmounts, endDays] = await mintpad.read.getClaimableHuntMultiple([
+        alice.account.address,
+        [TEST_TOKEN, TEST_TOKEN_2]
+      ]);
+
+      // Get results from individual calls
+      const [hunt1, endDay1] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+      const [hunt2, endDay2] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN_2]);
+
+      // Results should match
+      assert.equal(huntAmounts[0], hunt1);
+      assert.equal(huntAmounts[1], hunt2);
+      assert.equal(endDays[0], endDay1);
+      assert.equal(endDays[1], endDay2);
+    });
+
+    it("should handle multiple days of voting", async function () {
+      // Day 0: Alice votes
+      await activatePoints(alice, 1000);
+      await mintpad.write.vote([TEST_TOKEN, 400], { account: alice.account });
+      await mintpad.write.vote([TEST_TOKEN_2, 200], { account: alice.account });
+
+      // Move to Day 1: Alice votes again
+      await time.increase(Number(SECONDS_PER_DAY));
+      await activatePoints(alice, 800);
+      await mintpad.write.vote([TEST_TOKEN, 300], { account: alice.account });
+
+      // Move to Day 2 to query
+      await time.increase(Number(SECONDS_PER_DAY));
+
+      const [huntAmounts, endDays] = await mintpad.read.getClaimableHuntMultiple([
+        alice.account.address,
+        [TEST_TOKEN, TEST_TOKEN_2]
+      ]);
+
+      // Day 0: Total votes = 600
+      //   TEST_TOKEN: 400/600 * 1000 ≈ 666.66 HUNT
+      //   TEST_TOKEN_2: 200/600 * 1000 ≈ 333.33 HUNT
+      // Day 1: Total votes = 300
+      //   TEST_TOKEN: 300/300 * 1000 = 1000 HUNT
+      //   TEST_TOKEN_2: 0/300 * 1000 = 0 HUNT
+      const day0Token1 = (400n * DAILY_HUNT_REWARD) / 600n;
+      const day0Token2 = (200n * DAILY_HUNT_REWARD) / 600n;
+      const day1Token1 = (300n * DAILY_HUNT_REWARD) / 300n;
+
+      assert.equal(huntAmounts[0], day0Token1 + day1Token1);
+      assert.equal(huntAmounts[1], day0Token2);
+      assert.equal(endDays[0], 1n);
+      assert.equal(endDays[1], 1n);
+    });
+  }); // getClaimableHuntMultiple
 
   describe("getCurrentDay", function () {
     it("should return 0 on deployment day", async function () {
