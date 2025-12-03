@@ -23,7 +23,7 @@ contract Mintpad is Ownable {
     uint256 public constant VOTE_EXPIRATION_DAYS = 30;
     uint256 private constant SECONDS_PER_DAY = 86400;
     uint256 private constant MIN_CLAIM_EFFICIENCY_PERCENT = 98; // 98% minimum efficiency
-    uint256 private immutable DEPLOYMENT_DAY_TIMESTAMP;
+    uint256 private immutable DEPLOYMENT_TIMESTAMP;
 
     // EIP-712 Domain
     bytes32 private constant DOMAIN_TYPEHASH =
@@ -90,7 +90,7 @@ contract Mintpad is Ownable {
         signer = signerAddress;
         dailyHuntReward = initialDailyHuntReward;
         // Set to start of deployment day (UTC midnight 00:00) for consistent day boundaries
-        DEPLOYMENT_DAY_TIMESTAMP = (block.timestamp / SECONDS_PER_DAY) * SECONDS_PER_DAY;
+        DEPLOYMENT_TIMESTAMP = (block.timestamp / SECONDS_PER_DAY) * SECONDS_PER_DAY;
 
         // Initialize EIP-712 domain separator
         DOMAIN_SEPARATOR = keccak256(
@@ -167,7 +167,7 @@ contract Mintpad is Ownable {
      * @dev Voting is allowed only on the current day; claims are available starting the next day
      */
     function getCurrentDay() public view returns (uint256) {
-        return (block.timestamp - DEPLOYMENT_DAY_TIMESTAMP) / SECONDS_PER_DAY;
+        return (block.timestamp - DEPLOYMENT_TIMESTAMP) / SECONDS_PER_DAY;
     }
 
     // MARK: - Write Functions (User)
@@ -409,8 +409,8 @@ contract Mintpad is Ownable {
      * @notice Returns the deployment day timestamp (UTC midnight)
      * @return The timestamp used as day 0 reference
      */
-    function getDeploymentDayTimestamp() external view returns (uint256) {
-        return DEPLOYMENT_DAY_TIMESTAMP;
+    function getDeploymentTimestamp() external view returns (uint256) {
+        return DEPLOYMENT_TIMESTAMP;
     }
 }
 
