@@ -20,4 +20,4 @@ npx hardhat ignition verify chain-8453 --network base
 
 ## 🔵 Deployed Contracts on Base
 
-- Mintpad: [Contract Address TBD]
+- Mintpad: [0xfb51D2120c27bB56D91221042cb2dd2866a647fE](https://basescan.org/address/0xfb51D2120c27bB56D91221042cb2dd2866a647fE#code)

@@ -43,7 +43,7 @@ const config: HardhatUserConfig = {
       type: "http",
       chainType: "l1",
       url: process.env.RPC_BASE!,
-      accounts: [configVariable("MINTPAD_TEST_DEPLOYER")]
+      accounts: [configVariable("MINTPAD_DEPLOYER")]
     }
   },
   verify: {
