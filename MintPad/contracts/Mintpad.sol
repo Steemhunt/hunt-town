@@ -1,6 +1,28 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.30;
 
+/**
+ * NOTE: Known Issue - Day 0 Double-Claim Vulnerability (Not exploited in production)
+ *
+ * This contract has a potential double-claim bug for day 0 rewards:
+ * - `userTokenLastClaimDay` uses 0 for both "never claimed" (default) and "claimed up to day 0"
+ * - If a user claims on day 1 (when endDay = 0), their lastClaimedDay is set to 0
+ * - On subsequent claims, the code interprets lastClaimedDay = 0 as "never claimed"
+ * - This allows day 0 rewards to be claimed twice
+ *
+ * This issue was discovered at day 2 when the contract was already deployed.
+ * No exploits occurred because no users claimed on day 1 (when endDay would be 0).
+ * From day 2 onwards, endDay >= 1, so lastClaimedDay is always >= 1 (unambiguous).
+ *
+ * FIX FOR FUTURE DEPLOYMENTS:
+ * Store `lastClaimedDay + 1` instead of `lastClaimedDay` in the mapping, so that:
+ *   - 0 = never claimed (default)
+ *   - 1 = claimed up to day 0
+ *   - 2 = claimed up to day 1
+ *   - etc.
+ * Then check `storedValue == 0` for "never claimed" and decode as `lastClaimedDay = storedValue - 1`.
+ */
+
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";

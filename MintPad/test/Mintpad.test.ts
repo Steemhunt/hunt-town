@@ -514,6 +514,160 @@ describe("Mintpad", async function () {
       );
     });
 
+    /**
+     * NOTE: Known Issue - Day 0 Double-Claim Vulnerability
+     *
+     * This test demonstrates a bug where day 0 rewards can be claimed twice.
+     *
+     * Root cause:
+     * - `userTokenLastClaimDay` uses 0 for both "never claimed" (default) and "claimed up to day 0"
+     * - When a user claims on day 1 (endDay = 0), lastClaimedDay is set to 0
+     * - On subsequent claims, the code interprets lastClaimedDay = 0 as "never claimed"
+     * - This allows day 0 rewards to be included again in the next claim
+     *
+     * Production status:
+     * - This issue was discovered at day 2 when the contract was already deployed
+     * - No exploits occurred because no users claimed on day 1 (when endDay = 0)
+     * - From day 2 onwards, endDay >= 1, so lastClaimedDay is always >= 1 (unambiguous)
+     *
+     * Fix for future deployments:
+     * - Store `lastClaimedDay + 1` instead of `lastClaimedDay` in the mapping
+     * - 0 = never claimed (default), 1 = claimed up to day 0, 2 = claimed up to day 1, etc.
+     */
+    it("KNOWN BUG: allows double claiming day 0 rewards when claimed on day 1", async function () {
+      // Day 0: Alice votes
+      const day0 = await mintpad.read.getCurrentDay();
+      assert.equal(day0, 0n);
+      const sig0 = await signVotingPoint(mintpad.address, alice.account.address, day0, 1000, signer);
+      await mintpad.write.activateVotingPoint([1000, sig0], { account: alice.account });
+      await mintpad.write.vote([TEST_TOKEN, 800], { account: alice.account });
+
+      // Move to Day 1 - this is the critical window where the bug can be triggered
+      // Claiming on day 1 sets lastClaimedDay = 0 (endDay = currentDay - 1 = 0)
+      // which is indistinguishable from "never claimed", enabling double-claim on next claim
+      await time.increase(Number(SECONDS_PER_DAY));
+      assert.equal(await mintpad.read.getCurrentDay(), 1n);
+
+      // First claim on day 1: claims day 0 rewards, sets lastClaimedDay = 0 (BUG: ambiguous with "never claimed")
+      const [claimableHunt1] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+      assert.equal(claimableHunt1, DAILY_HUNT_REWARD); // 800/800 * 1000 HUNT
+      const tokensToMint1 = await estimateTokenAmount(TEST_TOKEN, claimableHunt1);
+      await mintpad.write.claim([TEST_TOKEN, tokensToMint1, 0], { account: alice.account });
+
+      // Verify lastClaimedDay is set to 0 (the problematic value)
+      const lastClaimedDay = await mintpad.read.userTokenLastClaimDay([alice.account.address, TEST_TOKEN]);
+      assert.equal(lastClaimedDay, 0n); // This 0 is indistinguishable from "never claimed"
+
+      // Move to Day 5 and vote again
+      await time.increase(Number(SECONDS_PER_DAY * 4n));
+      assert.equal(await mintpad.read.getCurrentDay(), 5n);
+      const day5 = 5n;
+      const sig5 = await signVotingPoint(mintpad.address, alice.account.address, day5, 500, signer);
+      await mintpad.write.activateVotingPoint([500, sig5], { account: alice.account });
+      await mintpad.write.vote([TEST_TOKEN, 300], { account: alice.account });
+
+      // Move to Day 6 to claim
+      await time.increase(Number(SECONDS_PER_DAY));
+      assert.equal(await mintpad.read.getCurrentDay(), 6n);
+
+      // BUG: getClaimableHunt includes day 0 AGAIN because lastClaimedDay = 0 is treated as "never claimed"
+      const [claimableHunt2] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+
+      // Expected if bug didn't exist: only day 5 rewards = 300/300 * 1000 = 1000 HUNT
+      // Actual with bug: day 0 (1000 HUNT) + days 1-4 (0 HUNT, no votes) + day 5 (1000 HUNT) = 2000 HUNT
+      const expectedWithBug = DAILY_HUNT_REWARD * 2n; // Day 0 + Day 5
+      const expectedWithoutBug = DAILY_HUNT_REWARD; // Only Day 5
+
+      // This assertion proves the bug exists - day 0 rewards are claimable again
+      assert.equal(claimableHunt2, expectedWithBug, "BUG: Day 0 rewards are included again");
+      assert.notEqual(claimableHunt2, expectedWithoutBug, "If this fails, the bug has been fixed");
+
+      // Actually perform the second claim to prove double-claiming succeeds
+      const tokensToMint2 = await estimateTokenAmount(TEST_TOKEN, claimableHunt2);
+      const aliceBalanceBefore = await testToken.read.balanceOf([alice.account.address]);
+
+      // Second claim succeeds - this should NOT be possible if the bug didn't exist
+      await mintpad.write.claim([TEST_TOKEN, tokensToMint2, 0], { account: alice.account });
+
+      const aliceBalanceAfter = await testToken.read.balanceOf([alice.account.address]);
+
+      // Verify Alice received tokens from the second claim (including day 0 rewards AGAIN)
+      assert.equal(
+        aliceBalanceAfter - aliceBalanceBefore,
+        tokensToMint2,
+        "BUG CONFIRMED: Second claim succeeded with day 0 rewards included again"
+      );
+
+      // After this second claim, lastClaimedDay = 5, so future claims won't include day 0 anymore
+      const finalLastClaimedDay = await mintpad.read.userTokenLastClaimDay([alice.account.address, TEST_TOKEN]);
+      assert.equal(finalLastClaimedDay, 5n, "After second claim, lastClaimedDay is no longer 0");
+    });
+
+    /**
+     * This test proves that the double-claim bug ONLY affects day 0.
+     * When claiming on day 2 (for day 1 rewards), lastClaimedDay = 1, which is unambiguous.
+     * Subsequent claims correctly start from day 2, preventing double-claiming.
+     */
+    it("should NOT allow double claiming from day 2 onwards (bug only affects day 0)", async function () {
+      // Skip day 0 - move to day 1 first
+      await time.increase(Number(SECONDS_PER_DAY));
+      assert.equal(await mintpad.read.getCurrentDay(), 1n);
+
+      // Day 1: Alice votes
+      const day1 = await mintpad.read.getCurrentDay();
+      const sig1 = await signVotingPoint(mintpad.address, alice.account.address, day1, 1000, signer);
+      await mintpad.write.activateVotingPoint([1000, sig1], { account: alice.account });
+      await mintpad.write.vote([TEST_TOKEN, 800], { account: alice.account });
+
+      // Move to Day 2 - claim day 1 rewards
+      await time.increase(Number(SECONDS_PER_DAY));
+      assert.equal(await mintpad.read.getCurrentDay(), 2n);
+
+      // First claim on day 2: claims day 1 rewards, sets lastClaimedDay = 1 (UNAMBIGUOUS - not 0!)
+      const [claimableHunt1] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+      assert.equal(claimableHunt1, DAILY_HUNT_REWARD); // 800/800 * 1000 HUNT
+      const tokensToMint1 = await estimateTokenAmount(TEST_TOKEN, claimableHunt1);
+      await mintpad.write.claim([TEST_TOKEN, tokensToMint1, 0], { account: alice.account });
+
+      // Verify lastClaimedDay is set to 1 (NOT 0, so it's unambiguous)
+      const lastClaimedDay = await mintpad.read.userTokenLastClaimDay([alice.account.address, TEST_TOKEN]);
+      assert.equal(lastClaimedDay, 1n, "lastClaimedDay = 1 is unambiguous (not the default 0)");
+
+      // Move to Day 6 and vote again
+      await time.increase(Number(SECONDS_PER_DAY * 4n));
+      assert.equal(await mintpad.read.getCurrentDay(), 6n);
+      const day6 = 6n;
+      const sig6 = await signVotingPoint(mintpad.address, alice.account.address, day6, 500, signer);
+      await mintpad.write.activateVotingPoint([500, sig6], { account: alice.account });
+      await mintpad.write.vote([TEST_TOKEN, 300], { account: alice.account });
+
+      // Move to Day 7 to claim
+      await time.increase(Number(SECONDS_PER_DAY));
+      assert.equal(await mintpad.read.getCurrentDay(), 7n);
+
+      // getClaimableHunt should only include day 6 rewards (NOT day 1 again)
+      const [claimableHunt2] = await mintpad.read.getClaimableHunt([alice.account.address, TEST_TOKEN]);
+
+      // Should only be day 6 rewards = 300/300 * 1000 = 1000 HUNT
+      // Day 1 should NOT be included again because lastClaimedDay = 1 is unambiguous
+      assert.equal(claimableHunt2, DAILY_HUNT_REWARD, "Only day 6 rewards, day 1 is NOT included again");
+
+      // Perform second claim
+      const tokensToMint2 = await estimateTokenAmount(TEST_TOKEN, claimableHunt2);
+      await mintpad.write.claim([TEST_TOKEN, tokensToMint2, 0], { account: alice.account });
+
+      // Verify lastClaimedDay is now 6
+      const finalLastClaimedDay = await mintpad.read.userTokenLastClaimDay([alice.account.address, TEST_TOKEN]);
+      assert.equal(finalLastClaimedDay, 6n);
+
+      // Third claim should fail - nothing left to claim
+      await assert.rejects(
+        mintpad.write.claim([TEST_TOKEN, tokensToMint2, 0], { account: alice.account }),
+        /Mintpad__NothingToClaim/,
+        "No double-claiming possible when lastClaimedDay > 0"
+      );
+    });
+
     it("should revert with zero tokensToMint", async function () {
       await setupVotingScenario();
 
@@ -641,16 +795,16 @@ describe("Mintpad", async function () {
     });
   }); // claim
 
-  describe("getDeploymentDayTimestamp", function () {
+  describe("getDeploymentTimestamp", function () {
     it("should return UTC midnight of deployment day", async function () {
-      const deploymentTimestamp = await mintpad.read.getDeploymentDayTimestamp();
+      const deploymentTimestamp = await mintpad.read.getDeploymentTimestamp();
 
       // Should be aligned to UTC midnight (divisible by 86400)
       assert.equal(deploymentTimestamp % SECONDS_PER_DAY, 0n);
     });
 
     it("should be consistent with getCurrentDay calculation", async function () {
-      const deploymentTimestamp = await mintpad.read.getDeploymentDayTimestamp();
+      const deploymentTimestamp = await mintpad.read.getDeploymentTimestamp();
       const currentDay = await mintpad.read.getCurrentDay();
 
       // Get current block timestamp
@@ -662,15 +816,15 @@ describe("Mintpad", async function () {
     });
 
     it("should remain constant after time passes", async function () {
-      const initialTimestamp = await mintpad.read.getDeploymentDayTimestamp();
+      const initialTimestamp = await mintpad.read.getDeploymentTimestamp();
 
       // Move forward 5 days
       await time.increase(Number(SECONDS_PER_DAY * 5n));
 
-      const laterTimestamp = await mintpad.read.getDeploymentDayTimestamp();
+      const laterTimestamp = await mintpad.read.getDeploymentTimestamp();
       assert.equal(initialTimestamp, laterTimestamp);
     });
-  }); // getDeploymentDayTimestamp
+  }); // getDeploymentTimestamp
 
   describe("getClaimableHuntMultiple", function () {
     // Use another verified HUNT child token on Base: MT
