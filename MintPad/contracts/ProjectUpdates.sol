@@ -16,6 +16,9 @@ contract ProjectUpdates is Ownable {
     // MARK: - Errors
     error ProjectUpdates__InvalidParams(string param);
     error ProjectUpdates__NotTokenCreator();
+    error ProjectUpdates__NotAuthorized();
+    error ProjectUpdates__AlreadyAuthority();
+    error ProjectUpdates__NotAuthority();
 
     // MARK: - Structs
     struct ProjectUpdate {
@@ -36,6 +39,9 @@ contract ProjectUpdates is Ownable {
     /// @notice Indices into projectUpdates array, grouped by token address
     mapping(address => uint256[]) private _tokenUpdateIndices;
 
+    /// @notice Additional authorities per token who can post updates (besides the creator)
+    mapping(address => address[]) private _tokenAuthorities;
+
     // MARK: - Events
     event PricePerUpdateChanged(uint256 newPricePerUpdate);
     event ProjectUpdatePosted(
@@ -44,6 +50,8 @@ contract ProjectUpdates is Ownable {
         uint256 indexed updateIndex,
         string link
     );
+    event AuthorityAdded(address indexed tokenAddress, address indexed authority);
+    event AuthorityRemoved(address indexed tokenAddress, address indexed authority);
 
     // MARK: - Constructor
     /**
@@ -66,21 +74,79 @@ contract ProjectUpdates is Ownable {
         emit PricePerUpdateChanged(newPricePerUpdate);
     }
 
+    // MARK: - Authority Management Functions
+
+    /**
+     * @notice Adds an additional authority who can post updates for a token
+     * @param tokenAddress The address of the token
+     * @param authority The address to grant authority to
+     * @dev Only the token creator can add authorities
+     */
+    function addAuthority(address tokenAddress, address authority) external {
+        if (tokenAddress == address(0)) revert ProjectUpdates__InvalidParams("zero address");
+        if (authority == address(0)) revert ProjectUpdates__InvalidParams("zero authority");
+
+        // Verify caller is the token creator
+        (address creator, , , , , ) = BOND.tokenBond(tokenAddress);
+        if (msg.sender != creator) revert ProjectUpdates__NotTokenCreator();
+
+        // Check if already an authority
+        if (_isAuthority(tokenAddress, authority)) revert ProjectUpdates__AlreadyAuthority();
+
+        _tokenAuthorities[tokenAddress].push(authority);
+
+        emit AuthorityAdded(tokenAddress, authority);
+    }
+
+    /**
+     * @notice Removes an authority from a token
+     * @param tokenAddress The address of the token
+     * @param authority The address to remove authority from
+     * @dev Only the token creator can remove authorities
+     */
+    function removeAuthority(address tokenAddress, address authority) external {
+        if (tokenAddress == address(0)) revert ProjectUpdates__InvalidParams("zero address");
+        if (authority == address(0)) revert ProjectUpdates__InvalidParams("zero authority");
+
+        // Verify caller is the token creator
+        (address creator, , , , , ) = BOND.tokenBond(tokenAddress);
+        if (msg.sender != creator) revert ProjectUpdates__NotTokenCreator();
+
+        // Remove from array by finding and swapping with last element
+        address[] storage authorities = _tokenAuthorities[tokenAddress];
+        uint256 length = authorities.length;
+        bool found = false;
+        for (uint256 i = 0; i < length; ++i) {
+            if (authorities[i] == authority) {
+                authorities[i] = authorities[length - 1];
+                authorities.pop();
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) revert ProjectUpdates__NotAuthority();
+
+        emit AuthorityRemoved(tokenAddress, authority);
+    }
+
     // MARK: - Write Functions
 
     /**
      * @notice Posts a project update for a token
      * @param tokenAddress The address of the token to post update for
      * @param link The link to the project update content
-     * @dev Only the token creator can post updates. Burns HUNT per update (skipped if price is 0).
+     * @dev Only the token creator or added authorities can post updates. Burns HUNT per update (skipped if price is 0).
      */
     function postUpdate(address tokenAddress, string calldata link) external {
         if (tokenAddress == address(0)) revert ProjectUpdates__InvalidParams("zero address");
         if (bytes(link).length == 0) revert ProjectUpdates__InvalidParams("empty link");
 
-        // Verify caller is the token creator
+        // Verify caller is the token creator or an authority
         (address creator, , , , , ) = BOND.tokenBond(tokenAddress);
-        if (msg.sender != creator) revert ProjectUpdates__NotTokenCreator();
+        if (msg.sender != creator && !_isAuthority(tokenAddress, msg.sender)) {
+            revert ProjectUpdates__NotAuthorized();
+        }
 
         // Burn HUNT by sending to dead address (skip if free updates enabled)
         if (pricePerUpdate > 0) {
@@ -100,6 +166,38 @@ contract ProjectUpdates is Ownable {
     }
 
     // MARK: - View Functions
+
+    /**
+     * @notice Returns the list of authorities for a token
+     * @param tokenAddress The token address to query
+     * @return Array of authority addresses
+     */
+    function getAuthorities(address tokenAddress) external view returns (address[] memory) {
+        return _tokenAuthorities[tokenAddress];
+    }
+
+    /**
+     * @notice Checks if an address is an authority for a token
+     * @param tokenAddress The token address to check
+     * @param authority The address to check
+     * @return True if the address is an authority for the token
+     */
+    function isAuthority(address tokenAddress, address authority) external view returns (bool) {
+        return _isAuthority(tokenAddress, authority);
+    }
+
+    // MARK: - Internal Functions
+
+    function _isAuthority(address tokenAddress, address authority) internal view returns (bool) {
+        address[] storage authorities = _tokenAuthorities[tokenAddress];
+        uint256 length = authorities.length;
+        for (uint256 i = 0; i < length; ++i) {
+            if (authorities[i] == authority) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * @notice Returns the total number of project updates

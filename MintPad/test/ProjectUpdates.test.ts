@@ -313,10 +313,10 @@ describe("ProjectUpdates", async function () {
       await stopImpersonatingAccount(tokenCreator);
     });
 
-    it("should revert when non-creator tries to post", async function () {
+    it("should revert when non-creator and non-authority tries to post", async function () {
       await assert.rejects(
         projectUpdates.write.postUpdate([TEST_TOKEN, "https://example.com/update"], { account: alice.account }),
-        /ProjectUpdates__NotTokenCreator/
+        /ProjectUpdates__NotAuthorized/
       );
     });
 
@@ -325,7 +325,7 @@ describe("ProjectUpdates", async function () {
       await impersonateAccount(tokenCreator);
       await assert.rejects(
         projectUpdates.write.postUpdate([TEST_TOKEN_2, "https://example.com/update"], { account: tokenCreator }),
-        /ProjectUpdates__NotTokenCreator/
+        /ProjectUpdates__NotAuthorized/
       );
       await stopImpersonatingAccount(tokenCreator);
     });
@@ -334,11 +334,11 @@ describe("ProjectUpdates", async function () {
       // Create a new wallet with no HUNT
       const [, , , newWallet] = await viem.getWalletClients();
 
-      // This will fail because newWallet is not the token creator
+      // This will fail because newWallet is not the token creator or authority
       // but even if they were, they wouldn't have HUNT
       await assert.rejects(
         projectUpdates.write.postUpdate([TEST_TOKEN, "https://example.com/update"], { account: newWallet.account }),
-        /ProjectUpdates__NotTokenCreator/
+        /ProjectUpdates__NotAuthorized/
       );
     });
   }); // postUpdate
@@ -537,6 +537,289 @@ describe("ProjectUpdates", async function () {
       assert.equal(updates.length, 3);
     });
   }); // getLatestProjectUpdates
+
+  describe("Authority management", function () {
+    describe("addAuthority", function () {
+      it("should allow token creator to add authority", async function () {
+        await impersonateAccount(tokenCreator);
+        const tx = projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await viem.assertions.emit(tx, projectUpdates, "AuthorityAdded");
+        await stopImpersonatingAccount(tokenCreator);
+
+        const isAuth = await projectUpdates.read.isAuthority([TEST_TOKEN, alice.account.address]);
+        assert.equal(isAuth, true);
+
+        const authorities = await projectUpdates.read.getAuthorities([TEST_TOKEN]);
+        assert.equal(authorities.length, 1);
+        assert.equal(authorities[0].toLowerCase(), alice.account.address.toLowerCase());
+      });
+
+      it("should allow adding multiple authorities", async function () {
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await projectUpdates.write.addAuthority([TEST_TOKEN, bob.account.address], { account: tokenCreator });
+        await stopImpersonatingAccount(tokenCreator);
+
+        const authorities = await projectUpdates.read.getAuthorities([TEST_TOKEN]);
+        assert.equal(authorities.length, 2);
+      });
+
+      it("should revert when non-creator tries to add authority", async function () {
+        await assert.rejects(
+          projectUpdates.write.addAuthority([TEST_TOKEN, bob.account.address], { account: alice.account }),
+          /ProjectUpdates__NotTokenCreator/
+        );
+      });
+
+      it("should revert when adding zero address as authority", async function () {
+        await impersonateAccount(tokenCreator);
+        await assert.rejects(
+          projectUpdates.write.addAuthority([TEST_TOKEN, ZERO_ADDRESS], { account: tokenCreator }),
+          /ProjectUpdates__InvalidParams\("zero authority"\)/
+        );
+        await stopImpersonatingAccount(tokenCreator);
+      });
+
+      it("should revert when adding authority for zero token address", async function () {
+        await impersonateAccount(tokenCreator);
+        await assert.rejects(
+          projectUpdates.write.addAuthority([ZERO_ADDRESS, alice.account.address], { account: tokenCreator }),
+          /ProjectUpdates__InvalidParams\("zero address"\)/
+        );
+        await stopImpersonatingAccount(tokenCreator);
+      });
+
+      it("should revert when adding same authority twice", async function () {
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await assert.rejects(
+          projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator }),
+          /ProjectUpdates__AlreadyAuthority/
+        );
+        await stopImpersonatingAccount(tokenCreator);
+      });
+    }); // addAuthority
+
+    describe("removeAuthority", function () {
+      it("should allow token creator to remove authority", async function () {
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+
+        const tx = projectUpdates.write.removeAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await viem.assertions.emit(tx, projectUpdates, "AuthorityRemoved");
+        await stopImpersonatingAccount(tokenCreator);
+
+        const isAuth = await projectUpdates.read.isAuthority([TEST_TOKEN, alice.account.address]);
+        assert.equal(isAuth, false);
+
+        const authorities = await projectUpdates.read.getAuthorities([TEST_TOKEN]);
+        assert.equal(authorities.length, 0);
+      });
+
+      it("should correctly remove authority from middle of list", async function () {
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await projectUpdates.write.addAuthority([TEST_TOKEN, bob.account.address], { account: tokenCreator });
+        await projectUpdates.write.addAuthority([TEST_TOKEN, owner.account.address], { account: tokenCreator });
+
+        // Remove bob (middle element)
+        await projectUpdates.write.removeAuthority([TEST_TOKEN, bob.account.address], { account: tokenCreator });
+        await stopImpersonatingAccount(tokenCreator);
+
+        const authorities = await projectUpdates.read.getAuthorities([TEST_TOKEN]);
+        assert.equal(authorities.length, 2);
+
+        // Verify bob is removed
+        const isBobAuth = await projectUpdates.read.isAuthority([TEST_TOKEN, bob.account.address]);
+        assert.equal(isBobAuth, false);
+
+        // Verify others are still authorities
+        const isAliceAuth = await projectUpdates.read.isAuthority([TEST_TOKEN, alice.account.address]);
+        const isOwnerAuth = await projectUpdates.read.isAuthority([TEST_TOKEN, owner.account.address]);
+        assert.equal(isAliceAuth, true);
+        assert.equal(isOwnerAuth, true);
+      });
+
+      it("should revert when non-creator tries to remove authority", async function () {
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await stopImpersonatingAccount(tokenCreator);
+
+        await assert.rejects(
+          projectUpdates.write.removeAuthority([TEST_TOKEN, alice.account.address], { account: bob.account }),
+          /ProjectUpdates__NotTokenCreator/
+        );
+      });
+
+      it("should revert when removing non-existent authority", async function () {
+        await impersonateAccount(tokenCreator);
+        await assert.rejects(
+          projectUpdates.write.removeAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator }),
+          /ProjectUpdates__NotAuthority/
+        );
+        await stopImpersonatingAccount(tokenCreator);
+      });
+
+      it("should revert when removing with zero authority address", async function () {
+        await impersonateAccount(tokenCreator);
+        await assert.rejects(
+          projectUpdates.write.removeAuthority([TEST_TOKEN, ZERO_ADDRESS], { account: tokenCreator }),
+          /ProjectUpdates__InvalidParams\("zero authority"\)/
+        );
+        await stopImpersonatingAccount(tokenCreator);
+      });
+
+      it("should revert when removing from zero token address", async function () {
+        await impersonateAccount(tokenCreator);
+        await assert.rejects(
+          projectUpdates.write.removeAuthority([ZERO_ADDRESS, alice.account.address], { account: tokenCreator }),
+          /ProjectUpdates__InvalidParams\("zero address"\)/
+        );
+        await stopImpersonatingAccount(tokenCreator);
+      });
+    }); // removeAuthority
+
+    describe("Authority posting updates", function () {
+      it("should allow authority to post update", async function () {
+        // Set price to zero for simplicity
+        await projectUpdates.write.setPricePerUpdate([0n], { account: owner.account });
+
+        // Add alice as authority
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await stopImpersonatingAccount(tokenCreator);
+
+        // Alice posts update
+        const tx = projectUpdates.write.postUpdate([TEST_TOKEN, "https://example.com/authority-update"], {
+          account: alice.account
+        });
+        await viem.assertions.emit(tx, projectUpdates, "ProjectUpdatePosted");
+
+        const count = await projectUpdates.read.getProjectUpdatesCount();
+        assert.equal(count, 1n);
+      });
+
+      it("should allow both creator and authority to post updates", async function () {
+        // Set price to zero for simplicity
+        await projectUpdates.write.setPricePerUpdate([0n], { account: owner.account });
+
+        // Add alice as authority
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+
+        // Creator posts
+        await projectUpdates.write.postUpdate([TEST_TOKEN, "https://example.com/creator-update"], {
+          account: tokenCreator
+        });
+        await stopImpersonatingAccount(tokenCreator);
+
+        // Authority posts
+        await projectUpdates.write.postUpdate([TEST_TOKEN, "https://example.com/authority-update"], {
+          account: alice.account
+        });
+
+        const count = await projectUpdates.read.getProjectUpdatesCount();
+        assert.equal(count, 2n);
+      });
+
+      it("should revert when removed authority tries to post", async function () {
+        // Set price to zero for simplicity
+        await projectUpdates.write.setPricePerUpdate([0n], { account: owner.account });
+
+        // Add and remove alice as authority
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await projectUpdates.write.removeAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await stopImpersonatingAccount(tokenCreator);
+
+        // Alice tries to post
+        await assert.rejects(
+          projectUpdates.write.postUpdate([TEST_TOKEN, "https://example.com/unauthorized"], { account: alice.account }),
+          /ProjectUpdates__NotAuthorized/
+        );
+      });
+
+      it("should burn HUNT from authority when posting with price", async function () {
+        // Fund alice with HUNT
+        await impersonateAccount(HUNT_WHALE);
+        await huntToken.write.transfer([alice.account.address, 100n * 10n ** 18n], { account: HUNT_WHALE });
+        await stopImpersonatingAccount(HUNT_WHALE);
+
+        // Approve
+        await huntToken.write.approve([projectUpdates.address, 100n * 10n ** 18n], { account: alice.account });
+
+        // Add alice as authority
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await stopImpersonatingAccount(tokenCreator);
+
+        const aliceBalanceBefore = await huntToken.read.balanceOf([alice.account.address]);
+        const deadBalanceBefore = await huntToken.read.balanceOf([DEAD_ADDRESS]);
+
+        // Alice posts update (should burn HUNT)
+        await projectUpdates.write.postUpdate([TEST_TOKEN, "https://example.com/paid-authority-update"], {
+          account: alice.account
+        });
+
+        const aliceBalanceAfter = await huntToken.read.balanceOf([alice.account.address]);
+        const deadBalanceAfter = await huntToken.read.balanceOf([DEAD_ADDRESS]);
+
+        assert.equal(aliceBalanceBefore - aliceBalanceAfter, PRICE_PER_UPDATE);
+        assert.equal(deadBalanceAfter - deadBalanceBefore, PRICE_PER_UPDATE);
+      });
+    }); // Authority posting updates
+
+    describe("getAuthorities and isAuthority", function () {
+      it("should return empty array for token with no authorities", async function () {
+        const authorities = await projectUpdates.read.getAuthorities([TEST_TOKEN]);
+        assert.equal(authorities.length, 0);
+      });
+
+      it("should return false for non-authority", async function () {
+        const isAuth = await projectUpdates.read.isAuthority([TEST_TOKEN, alice.account.address]);
+        assert.equal(isAuth, false);
+      });
+
+      it("should correctly reflect authority state", async function () {
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await stopImpersonatingAccount(tokenCreator);
+
+        assert.equal(await projectUpdates.read.isAuthority([TEST_TOKEN, alice.account.address]), true);
+        assert.equal(await projectUpdates.read.isAuthority([TEST_TOKEN, bob.account.address]), false);
+
+        const authorities = await projectUpdates.read.getAuthorities([TEST_TOKEN]);
+        assert.equal(authorities.length, 1);
+        assert.equal(authorities[0].toLowerCase(), alice.account.address.toLowerCase());
+      });
+
+      it("should keep authorities separate per token", async function () {
+        // Add alice as authority for TEST_TOKEN
+        await impersonateAccount(tokenCreator);
+        await projectUpdates.write.addAuthority([TEST_TOKEN, alice.account.address], { account: tokenCreator });
+        await stopImpersonatingAccount(tokenCreator);
+
+        // Add bob as authority for TEST_TOKEN_2
+        await impersonateAccount(tokenCreator2);
+        await projectUpdates.write.addAuthority([TEST_TOKEN_2, bob.account.address], { account: tokenCreator2 });
+        await stopImpersonatingAccount(tokenCreator2);
+
+        // Verify separation
+        assert.equal(await projectUpdates.read.isAuthority([TEST_TOKEN, alice.account.address]), true);
+        assert.equal(await projectUpdates.read.isAuthority([TEST_TOKEN, bob.account.address]), false);
+        assert.equal(await projectUpdates.read.isAuthority([TEST_TOKEN_2, alice.account.address]), false);
+        assert.equal(await projectUpdates.read.isAuthority([TEST_TOKEN_2, bob.account.address]), true);
+
+        const token1Authorities = await projectUpdates.read.getAuthorities([TEST_TOKEN]);
+        const token2Authorities = await projectUpdates.read.getAuthorities([TEST_TOKEN_2]);
+
+        assert.equal(token1Authorities.length, 1);
+        assert.equal(token2Authorities.length, 1);
+        assert.equal(token1Authorities[0].toLowerCase(), alice.account.address.toLowerCase());
+        assert.equal(token2Authorities[0].toLowerCase(), bob.account.address.toLowerCase());
+      });
+    }); // getAuthorities and isAuthority
+  }); // Authority management
 
   describe("Count functions", function () {
     it("should return correct total count", async function () {
