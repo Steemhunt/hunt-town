@@ -27,9 +27,9 @@ const config: HardhatUserConfig = {
       type: "edr-simulated",
       forking: {
         url: process.env.RPC_BASE!,
-        blockNumber: 37720000 // 2025-11-04 13:09:07 KST
+        blockNumber: 39501366 // Dec-15-2025 09:47:59 AM +UTC
       },
-      initialBaseFeePerGas: 1000000 // 1 gwei - low enough for tests
+      initialBaseFeePerGas: 100000 // Very low for fork tests
     },
     hardhatMainnet: {
       type: "edr-simulated",
