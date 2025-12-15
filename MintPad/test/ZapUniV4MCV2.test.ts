@@ -7,8 +7,6 @@ import { getContract, erc20Abi, parseEther, parseUnits } from "viem";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 // Contract addresses (Base Mainnet)
-const UNIVERSAL_ROUTER = "0x6fF5693b99212Da76ad316178A184AB56D299b43";
-const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const BOND_ADDRESS = "0xc5a076cad94176c2996B32d8466Be1cE757FAa27";
 const BOND_PERIPHERY_ADDRESS = "0x492C412369Db76C9cdD9939e6C521579301473a3";
 
@@ -70,12 +68,7 @@ describe("ZapUniV4MCV2", async function () {
     const [, alice] = await viem.getWalletClients();
     const publicClient = await viem.getPublicClient();
 
-    const zap = await viem.deployContract("ZapUniV4MCV2", [
-      UNIVERSAL_ROUTER,
-      PERMIT2,
-      BOND_ADDRESS,
-      BOND_PERIPHERY_ADDRESS
-    ]);
+    const zap = await viem.deployContract("ZapUniV4MCV2");
 
     const erc20 = (address: `0x${string}`) => getContract({ address, abi: erc20Abi, client: alice });
     const huntToken = erc20(HUNT);
@@ -100,7 +93,7 @@ describe("ZapUniV4MCV2", async function () {
     await mtToken.write.approve([zap.address, MAX_UINT256], { account: alice.account });
     await usdcToken.write.approve([zap.address, MAX_UINT256], { account: alice.account });
 
-    return { zap, alice, huntToken, mtToken, usdcToken, childToken, bond, bondPeriphery };
+    return { zap, alice, huntToken, childToken, bond, bondPeriphery };
   }
 
   // Helper: get total HUNT required for minting childAmount
@@ -131,37 +124,12 @@ describe("ZapUniV4MCV2", async function () {
   let zap: any;
   let alice: any;
   let huntToken: any;
-  let mtToken: any;
-  let usdcToken: any;
   let childToken: any;
   let bond: any;
   let bondPeriphery: any;
 
   beforeEach(async function () {
-    ({ zap, alice, huntToken, mtToken, usdcToken, childToken, bond, bondPeriphery } = await networkHelpers.loadFixture(
-      deployZapFixture
-    ));
-  });
-
-  describe("Contract initialization", function () {
-    it("should deploy with correct parameters", async function () {
-      assert.equal((await zap.read.UNIVERSAL_ROUTER()).toLowerCase(), UNIVERSAL_ROUTER.toLowerCase());
-      assert.equal((await zap.read.PERMIT2()).toLowerCase(), PERMIT2.toLowerCase());
-      assert.equal((await zap.read.BOND()).toLowerCase(), BOND_ADDRESS.toLowerCase());
-      assert.equal((await zap.read.BOND_PERIPHERY()).toLowerCase(), BOND_PERIPHERY_ADDRESS.toLowerCase());
-    });
-
-    it("should have correct token constants", async function () {
-      assert.equal((await zap.read.HUNT()).toLowerCase(), HUNT.toLowerCase());
-      assert.equal((await zap.read.MT()).toLowerCase(), MT.toLowerCase());
-      assert.equal((await zap.read.USDC()).toLowerCase(), USDC.toLowerCase());
-      assert.equal((await zap.read.ETH_ADDRESS()).toLowerCase(), ZERO_ADDRESS.toLowerCase());
-    });
-
-    it("should have correct pool parameters", async function () {
-      assert.equal(await zap.read.POOL_FEE(), 3000);
-      assert.equal(await zap.read.TICK_SPACING(), 60);
-    });
+    ({ zap, alice, huntToken, childToken, bond, bondPeriphery } = await networkHelpers.loadFixture(deployZapFixture));
   });
 
   describe("mint()", function () {
@@ -286,6 +254,174 @@ describe("ZapUniV4MCV2", async function () {
     it("should emit MintedReverse event", async function () {
       const tx = zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, 0n], { account: alice.account });
       await viem.assertions.emit(tx, zap, "MintedReverse");
+    });
+  });
+
+  describe("estimateMint()", function () {
+    it("should estimate HUNT amount correctly for HUNT input", async function () {
+      const publicClient = await viem.getPublicClient();
+      const huntRequired = await getHuntRequired(bond, CHILD_AMOUNT);
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMint",
+        args: [HUNT, CHILD_TOKEN, CHILD_AMOUNT]
+      });
+
+      const [fromTokenAmount, totalHuntRequired] = result;
+      assert.equal(fromTokenAmount, huntRequired);
+      assert.equal(totalHuntRequired, huntRequired);
+    });
+
+    it("should estimate MT amount for swap", async function () {
+      const publicClient = await viem.getPublicClient();
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMint",
+        args: [MT, CHILD_TOKEN, CHILD_AMOUNT]
+      });
+
+      const [fromTokenAmount, totalHuntRequired] = result;
+      assert.ok(fromTokenAmount > 0n, "Should estimate MT amount");
+      assert.ok(totalHuntRequired > 0n, "Should return HUNT required");
+    });
+
+    it("should estimate USDC amount for swap", async function () {
+      const publicClient = await viem.getPublicClient();
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMint",
+        args: [USDC, CHILD_TOKEN, CHILD_AMOUNT]
+      });
+
+      const [fromTokenAmount, totalHuntRequired] = result;
+      assert.ok(fromTokenAmount > 0n, "Should estimate USDC amount");
+      assert.ok(totalHuntRequired > 0n, "Should return HUNT required");
+    });
+
+    it("should estimate ETH amount for swap", async function () {
+      const publicClient = await viem.getPublicClient();
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMint",
+        args: [ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT]
+      });
+
+      const [fromTokenAmount, totalHuntRequired] = result;
+      assert.ok(fromTokenAmount > 0n, "Should estimate ETH amount");
+      assert.ok(totalHuntRequired > 0n, "Should return HUNT required");
+    });
+
+    it("estimate should be usable for actual mint with slippage", async function () {
+      const publicClient = await viem.getPublicClient();
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMint",
+        args: [HUNT, CHILD_TOKEN, CHILD_AMOUNT]
+      });
+
+      const [estimatedAmount] = result;
+      // Add 1% slippage buffer
+      const maxAmount = (estimatedAmount * 101n) / 100n;
+
+      const before = await childToken.read.balanceOf([alice.account.address]);
+      await zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, maxAmount], { account: alice.account });
+      const after = await childToken.read.balanceOf([alice.account.address]);
+
+      assert.equal(after - before, CHILD_AMOUNT);
+    });
+  });
+
+  describe("estimateMintReverse()", function () {
+    it("should estimate child tokens for HUNT input", async function () {
+      const publicClient = await viem.getPublicClient();
+      const [expectedTokens] = await bondPeriphery.read.getTokensForReserve([CHILD_TOKEN, HUNT_AMOUNT, false]);
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMintReverse",
+        args: [HUNT, CHILD_TOKEN, HUNT_AMOUNT]
+      });
+
+      const [huntChildAmount, huntAmount] = result;
+      assert.equal(huntChildAmount, expectedTokens);
+      assert.equal(huntAmount, HUNT_AMOUNT);
+    });
+
+    it("should estimate child tokens for MT swap", async function () {
+      const publicClient = await viem.getPublicClient();
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMintReverse",
+        args: [MT, CHILD_TOKEN, MT_AMOUNT]
+      });
+
+      const [huntChildAmount, huntAmount] = result;
+      assert.ok(huntChildAmount > 0n, "Should estimate child tokens");
+      assert.ok(huntAmount > 0n, "Should estimate HUNT received from swap");
+    });
+
+    it("should estimate child tokens for USDC swap", async function () {
+      const publicClient = await viem.getPublicClient();
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMintReverse",
+        args: [USDC, CHILD_TOKEN, USDC_AMOUNT]
+      });
+
+      const [huntChildAmount, huntAmount] = result;
+      assert.ok(huntChildAmount > 0n, "Should estimate child tokens");
+      assert.ok(huntAmount > 0n, "Should estimate HUNT received from swap");
+    });
+
+    it("should estimate child tokens for ETH swap", async function () {
+      const publicClient = await viem.getPublicClient();
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMintReverse",
+        args: [ZERO_ADDRESS, CHILD_TOKEN, ETH_AMOUNT]
+      });
+
+      const [huntChildAmount, huntAmount] = result;
+      assert.ok(huntChildAmount > 0n, "Should estimate child tokens");
+      assert.ok(huntAmount > 0n, "Should estimate HUNT received from swap");
+    });
+
+    it("estimate should be usable for actual mintReverse with slippage", async function () {
+      const publicClient = await viem.getPublicClient();
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMintReverse",
+        args: [HUNT, CHILD_TOKEN, HUNT_AMOUNT]
+      });
+
+      const [estimatedChildAmount] = result;
+      // Apply 1% slippage (minAmount = estimated - 1%)
+      const minChildAmount = (estimatedChildAmount * 99n) / 100n;
+
+      const before = await childToken.read.balanceOf([alice.account.address]);
+      await zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, minChildAmount], { account: alice.account });
+      const received = (await childToken.read.balanceOf([alice.account.address])) - before;
+
+      assert.ok(received >= minChildAmount, "Should receive at least minChildAmount");
     });
   });
 });

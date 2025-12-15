@@ -29,6 +29,26 @@ struct ExactInputSingleParams {
     bytes hookData;
 }
 
+struct QuoteExactSingleParams {
+    PoolKey poolKey;
+    bool zeroForOne;
+    uint128 exactAmount;
+    bytes hookData;
+}
+
+interface IV4Quoter {
+    /// @notice Returns the output amount for a given exact input swap
+    /// @dev These functions are not view because they revert with the result - call via staticcall
+    function quoteExactInputSingle(
+        QuoteExactSingleParams memory params
+    ) external returns (uint256 amountOut, uint256 gasEstimate);
+
+    /// @notice Returns the input amount for a given exact output swap
+    function quoteExactOutputSingle(
+        QuoteExactSingleParams memory params
+    ) external returns (uint256 amountIn, uint256 gasEstimate);
+}
+
 // ============ Mint Club V2 Interfaces ============
 
 interface IMCV2_Bond {

@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IUniversalRouter, IAllowanceTransfer, IHooks, PoolKey, ExactInputSingleParams, IMCV2_Bond, IMCV2_BondPeriphery, Commands, Actions, ActionConstants} from "./Interfaces.sol";
+import {IUniversalRouter, IAllowanceTransfer, IHooks, PoolKey, ExactInputSingleParams, QuoteExactSingleParams, IV4Quoter, IMCV2_Bond, IMCV2_BondPeriphery, Commands, Actions, ActionConstants} from "./Interfaces.sol";
 
 /**
  * @title ZapUniV4MCV2
@@ -23,11 +23,13 @@ contract ZapUniV4MCV2 {
     uint24 public constant POOL_FEE = 3000;
     int24 public constant TICK_SPACING = 60;
 
-    // ============ External Contracts ============
-    IUniversalRouter public immutable UNIVERSAL_ROUTER;
-    address public immutable PERMIT2;
-    IMCV2_Bond public immutable BOND;
-    IMCV2_BondPeriphery public immutable BOND_PERIPHERY;
+    // ============ External Contracts (Base Mainnet) ============
+    IUniversalRouter public constant UNIVERSAL_ROUTER = IUniversalRouter(0x6fF5693b99212Da76ad316178A184AB56D299b43);
+    address public constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+    IV4Quoter public constant QUOTER = IV4Quoter(0x0d5e0F971ED27FBfF6c2837bf31316121532048D);
+    IMCV2_Bond public constant BOND = IMCV2_Bond(0xc5a076cad94176c2996B32d8466Be1cE757FAa27);
+    IMCV2_BondPeriphery public constant BOND_PERIPHERY =
+        IMCV2_BondPeriphery(0x492C412369Db76C9cdD9939e6C521579301473a3);
 
     // ============ Errors ============
     error ZapUniV4MCV2__UnsupportedToken();
@@ -56,15 +58,10 @@ contract ZapUniV4MCV2 {
     );
 
     // ============ Constructor ============
-    constructor(address universalRouter, address permit2, address bond, address bondPeriphery) {
-        UNIVERSAL_ROUTER = IUniversalRouter(universalRouter);
-        PERMIT2 = permit2;
-        BOND = IMCV2_Bond(bond);
-        BOND_PERIPHERY = IMCV2_BondPeriphery(bondPeriphery);
-
+    constructor() {
         // Approve HUNT for Bond and BondPeriphery contracts
-        IERC20(HUNT).approve(bond, type(uint256).max);
-        IERC20(HUNT).approve(bondPeriphery, type(uint256).max);
+        IERC20(HUNT).approve(address(BOND), type(uint256).max);
+        IERC20(HUNT).approve(address(BOND_PERIPHERY), type(uint256).max);
 
         // Setup Permit2 approvals for swap input tokens
         _setupPermit2Approval(MT);
@@ -152,6 +149,82 @@ contract ZapUniV4MCV2 {
         _refundHUNT();
 
         emit MintedReverse(msg.sender, fromToken, huntChildToken, huntChildAmount, fromTokenAmount, huntAmount);
+    }
+
+    // ============ Estimation Functions (for frontend) ============
+
+    /**
+     * @notice Estimate fromToken amount needed to mint exact huntChildAmount
+     * @dev Call via staticcall - reverts with result for swap quotes
+     * @param fromToken Input token (HUNT, MT, USDC, or address(0) for ETH)
+     * @param huntChildToken The HUNT-backed token to mint
+     * @param huntChildAmount Exact amount of child tokens to mint
+     * @return fromTokenAmount Estimated fromToken needed
+     * @return totalHuntRequired Total HUNT needed (reserve + royalty)
+     */
+    function estimateMint(
+        address fromToken,
+        address huntChildToken,
+        uint256 huntChildAmount
+    ) external returns (uint256 fromTokenAmount, uint256 totalHuntRequired) {
+        (uint256 huntRequired, uint256 royalty) = BOND.getReserveForToken(huntChildToken, huntChildAmount);
+        totalHuntRequired = huntRequired + royalty;
+
+        if (fromToken == HUNT) {
+            fromTokenAmount = totalHuntRequired;
+        } else {
+            // Use Quoter to estimate swap input needed for exact HUNT output
+            (fromTokenAmount, ) = QUOTER.quoteExactOutputSingle(
+                _buildQuoteParams(fromToken, uint128(totalHuntRequired))
+            );
+        }
+    }
+
+    /**
+     * @notice Estimate huntChildAmount received for exact fromTokenAmount
+     * @dev Call via staticcall - reverts with result for swap quotes
+     * @param fromToken Input token (HUNT, MT, USDC, or address(0) for ETH)
+     * @param huntChildToken The HUNT-backed token to mint
+     * @param fromTokenAmount Exact fromToken to spend
+     * @return huntChildAmount Estimated child tokens to receive
+     * @return huntAmount HUNT amount after swap (or direct if fromToken is HUNT)
+     */
+    function estimateMintReverse(
+        address fromToken,
+        address huntChildToken,
+        uint256 fromTokenAmount
+    ) external returns (uint256 huntChildAmount, uint256 huntAmount) {
+        if (fromToken == HUNT) {
+            huntAmount = fromTokenAmount;
+        } else {
+            // Use Quoter to estimate HUNT output from swap
+            (huntAmount, ) = QUOTER.quoteExactInputSingle(_buildQuoteParams(fromToken, uint128(fromTokenAmount)));
+        }
+
+        (huntChildAmount, ) = BOND_PERIPHERY.getTokensForReserve(huntChildToken, huntAmount, false);
+    }
+
+    /**
+     * @notice Build QuoteExactSingleParams for the given token
+     */
+    function _buildQuoteParams(address fromToken, uint128 amount) private pure returns (QuoteExactSingleParams memory) {
+        (address currency0, address currency1, bool zeroForOne) = fromToken == ETH_ADDRESS
+            ? (ETH_ADDRESS, HUNT, true)
+            : (HUNT, fromToken, false);
+
+        return
+            QuoteExactSingleParams({
+                poolKey: PoolKey({
+                    currency0: currency0,
+                    currency1: currency1,
+                    fee: POOL_FEE,
+                    tickSpacing: TICK_SPACING,
+                    hooks: IHooks(address(0))
+                }),
+                zeroForOne: zeroForOne,
+                exactAmount: amount,
+                hookData: bytes("")
+            });
     }
 
     // ============ Internal Functions ============
