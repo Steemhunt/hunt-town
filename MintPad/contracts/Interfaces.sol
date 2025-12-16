@@ -29,6 +29,14 @@ struct ExactInputSingleParams {
     bytes hookData;
 }
 
+struct ExactOutputSingleParams {
+    PoolKey poolKey;
+    bool zeroForOne;
+    uint128 amountOut;
+    uint128 amountInMaximum;
+    bytes hookData;
+}
+
 struct QuoteExactSingleParams {
     PoolKey poolKey;
     bool zeroForOne;
@@ -83,13 +91,17 @@ interface IMCV2_BondPeriphery {
 // ============ Constants ============
 
 library Commands {
+    uint256 constant SWEEP = 0x04;
     uint256 constant V4_SWAP = 0x10;
 }
 
 library Actions {
     uint256 constant SWAP_EXACT_IN_SINGLE = 0x06;
+    uint256 constant SWAP_EXACT_OUT_SINGLE = 0x08;
+    uint256 constant SETTLE = 0x0b;
     uint256 constant SETTLE_ALL = 0x0c;
     uint256 constant TAKE = 0x0e;
+    uint256 constant TAKE_ALL = 0x0f;
 }
 
 library ActionConstants {

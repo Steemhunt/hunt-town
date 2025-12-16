@@ -233,14 +233,60 @@ describe("ZapUniV4MCV2", async function () {
     });
   });
 
-  describe("HUNT refund", function () {
-    it("should refund excess HUNT after mint", async function () {
-      const mtToUse = MT_AMOUNT * 2n;
-      const huntBefore = await huntToken.read.balanceOf([alice.account.address]);
-      await zap.write.mint([MT, CHILD_TOKEN, CHILD_AMOUNT, mtToUse], { account: alice.account });
-      const huntAfter = await huntToken.read.balanceOf([alice.account.address]);
+  describe("Token refunds", function () {
+    it("should refund excess MT after mint (exactOutput swap)", async function () {
+      const publicClient = await viem.getPublicClient();
+      const mtToken = getContract({ address: MT, abi: erc20Abi, client: publicClient });
 
-      assert.ok(huntAfter >= huntBefore, "Should receive HUNT refund");
+      // Estimate how much MT is actually needed
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMint",
+        args: [MT, CHILD_TOKEN, CHILD_AMOUNT]
+      });
+      const [estimatedMT] = result;
+
+      // Send 2x what's needed
+      const mtToSend = estimatedMT * 2n;
+      const mtBefore = await mtToken.read.balanceOf([alice.account.address]);
+
+      await zap.write.mint([MT, CHILD_TOKEN, CHILD_AMOUNT, mtToSend], { account: alice.account });
+
+      const mtAfter = await mtToken.read.balanceOf([alice.account.address]);
+      const mtUsed = mtBefore - mtAfter;
+
+      // Should use approximately the estimated amount, not the full mtToSend
+      assert.ok(mtUsed < mtToSend, "Should not use entire max amount");
+      assert.ok(mtUsed <= (estimatedMT * 105n) / 100n, "Should use roughly the estimated amount (within 5%)");
+    });
+
+    it("should refund excess ETH after mint (exactOutput swap)", async function () {
+      const publicClient = await viem.getPublicClient();
+
+      // Estimate how much ETH is actually needed
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMint",
+        args: [ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT]
+      });
+      const [estimatedETH] = result;
+
+      // Send 2x what's needed
+      const ethToSend = estimatedETH * 2n;
+      const ethBefore = await publicClient.getBalance({ address: alice.account.address });
+
+      await zap.write.mint([ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT, ethToSend], {
+        account: alice.account,
+        value: ethToSend
+      });
+
+      const ethAfter = await publicClient.getBalance({ address: alice.account.address });
+      const ethUsed = ethBefore - ethAfter;
+
+      // ethUsed includes gas, so check that it's significantly less than ethToSend + reasonable gas
+      assert.ok(ethUsed < ethToSend, "Should refund excess ETH");
     });
   });
 

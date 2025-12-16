@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IUniversalRouter, IAllowanceTransfer, IHooks, PoolKey, ExactInputSingleParams, QuoteExactSingleParams, IV4Quoter, IMCV2_Bond, IMCV2_BondPeriphery, Commands, Actions, ActionConstants} from "./Interfaces.sol";
+import {IUniversalRouter, IAllowanceTransfer, IHooks, PoolKey, ExactInputSingleParams, ExactOutputSingleParams, QuoteExactSingleParams, IV4Quoter, IMCV2_Bond, IMCV2_BondPeriphery, Commands, Actions, ActionConstants} from "./Interfaces.sol";
 
 /**
  * @title ZapUniV4MCV2
@@ -97,9 +97,10 @@ contract ZapUniV4MCV2 {
             fromTokenUsed = totalHuntRequired;
         } else {
             _validateAndTransferInput(fromToken, maxFromTokenAmount);
-            uint256 huntReceived = _executeV4Swap(fromToken, maxFromTokenAmount);
-            if (huntReceived < totalHuntRequired) revert ZapUniV4MCV2__InsufficientHUNTReceived();
-            fromTokenUsed = maxFromTokenAmount;
+            // Use exactOutput swap to get exactly the HUNT needed
+            fromTokenUsed = _executeV4SwapExactOutput(fromToken, totalHuntRequired, maxFromTokenAmount);
+            // Refund unused input token (same token type, not HUNT)
+            _refundToken(fromToken, maxFromTokenAmount - fromTokenUsed);
         }
 
         uint256 huntUsed;
@@ -248,7 +249,7 @@ contract ZapUniV4MCV2 {
     }
 
     /**
-     * @notice Execute V4 swap to HUNT
+     * @notice Execute V4 exactInput swap to HUNT (used by mintReverse)
      * @dev Pool configs: ETH/HUNT (zeroForOne=true), HUNT/USDC & HUNT/MT (zeroForOne=false)
      */
     function _executeV4Swap(address fromToken, uint256 amountIn) private returns (uint256 huntReceived) {
@@ -260,7 +261,7 @@ contract ZapUniV4MCV2 {
 
         bytes memory commands = abi.encodePacked(uint8(Commands.V4_SWAP));
         bytes[] memory inputs = new bytes[](1);
-        inputs[0] = _buildV4SwapInput(currency0, currency1, zeroForOne, uint128(amountIn));
+        inputs[0] = _buildV4SwapInputExactIn(currency0, currency1, zeroForOne, uint128(amountIn));
 
         if (fromToken == ETH_ADDRESS) {
             UNIVERSAL_ROUTER.execute{value: amountIn}(commands, inputs, block.timestamp);
@@ -271,6 +272,55 @@ contract ZapUniV4MCV2 {
         huntReceived = IERC20(HUNT).balanceOf(address(this)) - huntBefore;
     }
 
+    /**
+     * @notice Execute V4 exactOutput swap to get exact HUNT amount (used by mint)
+     * @param fromToken Input token (MT, USDC, or ETH)
+     * @param huntAmountOut Exact HUNT amount to receive
+     * @param amountInMax Maximum input token to spend
+     * @return amountIn Actual input token spent
+     */
+    function _executeV4SwapExactOutput(
+        address fromToken,
+        uint256 huntAmountOut,
+        uint256 amountInMax
+    ) private returns (uint256 amountIn) {
+        uint256 balanceBefore = fromToken == ETH_ADDRESS
+            ? address(this).balance
+            : IERC20(fromToken).balanceOf(address(this));
+
+        (address currency0, address currency1, bool zeroForOne) = fromToken == ETH_ADDRESS
+            ? (ETH_ADDRESS, HUNT, true)
+            : (HUNT, fromToken, false);
+
+        bytes memory swapInput = _buildV4SwapInputExactOut(
+            currency0,
+            currency1,
+            zeroForOne,
+            uint128(huntAmountOut),
+            uint128(amountInMax)
+        );
+
+        if (fromToken == ETH_ADDRESS) {
+            // For ETH: V4_SWAP + SWEEP to recover unused ETH
+            bytes memory commands = abi.encodePacked(uint8(Commands.V4_SWAP), uint8(Commands.SWEEP));
+            bytes[] memory inputs = new bytes[](2);
+            inputs[0] = swapInput;
+            inputs[1] = abi.encode(ETH_ADDRESS, address(this), 0); // SWEEP: (token, recipient, amountMin)
+            UNIVERSAL_ROUTER.execute{value: amountInMax}(commands, inputs, block.timestamp);
+        } else {
+            bytes memory commands = abi.encodePacked(uint8(Commands.V4_SWAP));
+            bytes[] memory inputs = new bytes[](1);
+            inputs[0] = swapInput;
+            UNIVERSAL_ROUTER.execute(commands, inputs, block.timestamp);
+        }
+
+        uint256 balanceAfter = fromToken == ETH_ADDRESS
+            ? address(this).balance
+            : IERC20(fromToken).balanceOf(address(this));
+
+        amountIn = balanceBefore - balanceAfter;
+    }
+
     function _refundHUNT() private {
         uint256 balance = IERC20(HUNT).balanceOf(address(this));
         if (balance > 0) {
@@ -278,10 +328,21 @@ contract ZapUniV4MCV2 {
         }
     }
 
+    function _refundToken(address token, uint256 amount) private {
+        if (amount == 0) return;
+
+        if (token == ETH_ADDRESS) {
+            (bool success, ) = msg.sender.call{value: amount}("");
+            require(success, "ETH refund failed");
+        } else {
+            IERC20(token).safeTransfer(msg.sender, amount);
+        }
+    }
+
     /**
      * @notice Build V4 swap input for exact input single swap
      */
-    function _buildV4SwapInput(
+    function _buildV4SwapInputExactIn(
         address currency0,
         address currency1,
         bool zeroForOne,
@@ -316,6 +377,49 @@ contract ZapUniV4MCV2 {
         );
         params[1] = abi.encode(settleToken, amountIn);
         params[2] = abi.encode(takeToken, address(this), ActionConstants.OPEN_DELTA);
+
+        return abi.encode(actions, params);
+    }
+
+    /**
+     * @notice Build V4 swap input for exact output single swap
+     */
+    function _buildV4SwapInputExactOut(
+        address currency0,
+        address currency1,
+        bool zeroForOne,
+        uint128 amountOut,
+        uint128 amountInMax
+    ) private view returns (bytes memory) {
+        bytes memory actions = abi.encodePacked(
+            uint8(Actions.SWAP_EXACT_OUT_SINGLE),
+            uint8(Actions.SETTLE_ALL),
+            uint8(Actions.TAKE)
+        );
+
+        bytes[] memory params = new bytes[](3);
+
+        PoolKey memory poolKey = PoolKey({
+            currency0: currency0,
+            currency1: currency1,
+            fee: POOL_FEE,
+            tickSpacing: TICK_SPACING,
+            hooks: IHooks(address(0))
+        });
+
+        (address settleToken, address takeToken) = zeroForOne ? (currency0, currency1) : (currency1, currency0);
+
+        params[0] = abi.encode(
+            ExactOutputSingleParams({
+                poolKey: poolKey,
+                zeroForOne: zeroForOne,
+                amountOut: amountOut,
+                amountInMaximum: amountInMax,
+                hookData: bytes("")
+            })
+        );
+        params[1] = abi.encode(settleToken, amountInMax); // SETTLE_ALL: (currency, maxAmount)
+        params[2] = abi.encode(takeToken, address(this), ActionConstants.OPEN_DELTA); // TAKE: (currency, recipient, amount)
 
         return abi.encode(actions, params);
     }
