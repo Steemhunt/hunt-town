@@ -88,24 +88,24 @@ contract ZapUniV4MCV2 {
     ) external payable returns (uint256 fromTokenUsed) {
         if (huntChildAmount == 0) revert ZapUniV4MCV2__InvalidAmount();
 
-        (uint256 huntRequired, uint256 royalty) = BOND.getReserveForToken(huntChildToken, huntChildAmount);
-        uint256 totalHuntRequired = huntRequired + royalty;
+        // Note: getReserveForToken returns (reserveAmount, royalty) where reserveAmount ALREADY includes royalty
+        (uint256 huntRequired, ) = BOND.getReserveForToken(huntChildToken, huntChildAmount);
 
         if (fromToken == HUNT) {
             if (msg.value != 0) revert ZapUniV4MCV2__InvalidETHAmount();
-            if (totalHuntRequired > maxFromTokenAmount) revert ZapUniV4MCV2__SlippageExceeded();
-            IERC20(HUNT).safeTransferFrom(msg.sender, address(this), totalHuntRequired);
-            fromTokenUsed = totalHuntRequired;
+            if (huntRequired > maxFromTokenAmount) revert ZapUniV4MCV2__SlippageExceeded();
+            IERC20(HUNT).safeTransferFrom(msg.sender, address(this), huntRequired);
+            fromTokenUsed = huntRequired;
         } else {
             _validateAndTransferInput(fromToken, maxFromTokenAmount);
             // Use exactOutput swap to get exactly the HUNT needed
-            fromTokenUsed = _executeV4SwapExactOutput(fromToken, totalHuntRequired, maxFromTokenAmount);
+            fromTokenUsed = _executeV4SwapExactOutput(fromToken, huntRequired, maxFromTokenAmount);
             // Refund unused input token (same token type, not HUNT)
             _refundToken(fromToken, maxFromTokenAmount - fromTokenUsed);
         }
 
         uint256 huntUsed;
-        try BOND.mint(huntChildToken, huntChildAmount, totalHuntRequired, msg.sender) returns (uint256 actualHuntUsed) {
+        try BOND.mint(huntChildToken, huntChildAmount, huntRequired, msg.sender) returns (uint256 actualHuntUsed) {
             huntUsed = actualHuntUsed;
         } catch {
             revert ZapUniV4MCV2__SlippageExceeded();
@@ -163,23 +163,20 @@ contract ZapUniV4MCV2 {
      * @param huntChildToken The HUNT-backed token to mint
      * @param huntChildAmount Exact amount of child tokens to mint
      * @return fromTokenAmount Estimated fromToken needed
-     * @return totalHuntRequired Total HUNT needed (reserve + royalty)
+     * @return huntRequired Total HUNT needed (already includes royalty)
      */
     function estimateMint(
         address fromToken,
         address huntChildToken,
         uint256 huntChildAmount
-    ) external returns (uint256 fromTokenAmount, uint256 totalHuntRequired) {
-        (uint256 huntRequired, uint256 royalty) = BOND.getReserveForToken(huntChildToken, huntChildAmount);
-        totalHuntRequired = huntRequired + royalty;
+    ) external returns (uint256 fromTokenAmount, uint256 huntRequired) {
+        (huntRequired, ) = BOND.getReserveForToken(huntChildToken, huntChildAmount);
 
         if (fromToken == HUNT) {
-            fromTokenAmount = totalHuntRequired;
+            fromTokenAmount = huntRequired;
         } else {
             // Use Quoter to estimate swap input needed for exact HUNT output
-            (fromTokenAmount, ) = QUOTER.quoteExactOutputSingle(
-                _buildQuoteParams(fromToken, uint128(totalHuntRequired))
-            );
+            (fromTokenAmount, ) = QUOTER.quoteExactOutputSingle(_buildQuoteParams(fromToken, uint128(huntRequired)));
         }
     }
 

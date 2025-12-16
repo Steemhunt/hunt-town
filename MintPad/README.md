@@ -24,4 +24,4 @@ npx hardhat ignition verify chain-8453 --network base
 
 - Mintpad: [0xfb51D2120c27bB56D91221042cb2dd2866a647fE](https://basescan.org/address/0xfb51D2120c27bB56D91221042cb2dd2866a647fE#code)
 - ProjectUpdates: [0x1D3EecD659CE2D0054b5EB939db791aAC1eA9ed6](https://basescan.org/address/0x1D3EecD659CE2D0054b5EB939db791aAC1eA9ed6#code)
-- ZapUniV4MCV2: [0xEbbE63E28BA6690E46B536209Aa0342dfF043e7e](https://basescan.org/address/0xEbbE63E28BA6690E46B536209Aa0342dfF043e7e#code)
+- ZapUniV4MCV2: [0xa2e7BcA51A84Ed635909a8E845d5f66602742A75](https://basescan.org/address/0xa2e7BcA51A84Ed635909a8E845d5f66602742A75#code)

@@ -97,9 +97,10 @@ describe("ZapUniV4MCV2", async function () {
   }
 
   // Helper: get total HUNT required for minting childAmount
+  // Note: getReserveForToken returns (reserveAmount, royalty) where reserveAmount ALREADY includes royalty
   async function getHuntRequired(bond: any, childAmount: bigint) {
-    const [reserve, royalty] = await bond.read.getReserveForToken([CHILD_TOKEN, childAmount]);
-    return reserve + royalty;
+    const [reserveAmount] = await bond.read.getReserveForToken([CHILD_TOKEN, childAmount]);
+    return reserveAmount;
   }
 
   // Helper: mint with assertions
