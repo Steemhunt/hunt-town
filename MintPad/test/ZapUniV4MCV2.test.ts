@@ -184,6 +184,27 @@ describe("ZapUniV4MCV2", async function () {
         /ZapUniV4MCV2__UnsupportedToken/
       );
     });
+
+    it("should revert if ETH sent with HUNT payment", async function () {
+      const huntRequired = await getHuntRequired(bond, CHILD_AMOUNT);
+      await assert.rejects(
+        zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, huntRequired], {
+          account: alice.account,
+          value: 1n // Accidental ETH
+        }),
+        /ZapUniV4MCV2__InvalidETHAmount/
+      );
+    });
+
+    it("should revert if ETH sent with ERC20 payment", async function () {
+      await assert.rejects(
+        zap.write.mint([MT, CHILD_TOKEN, CHILD_AMOUNT, MT_AMOUNT], {
+          account: alice.account,
+          value: 1n // Accidental ETH
+        }),
+        /ZapUniV4MCV2__InvalidETHAmount/
+      );
+    });
   });
 
   describe("mintReverse()", function () {
@@ -229,6 +250,26 @@ describe("ZapUniV4MCV2", async function () {
       await assert.rejects(
         zap.write.mintReverse([HUNT, CHILD_TOKEN, 0n, 0n], { account: alice.account }),
         /ZapUniV4MCV2__InvalidAmount/
+      );
+    });
+
+    it("should revert if ETH sent with HUNT payment", async function () {
+      await assert.rejects(
+        zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, 0n], {
+          account: alice.account,
+          value: 1n // Accidental ETH
+        }),
+        /ZapUniV4MCV2__InvalidETHAmount/
+      );
+    });
+
+    it("should revert if ETH sent with ERC20 payment", async function () {
+      await assert.rejects(
+        zap.write.mintReverse([MT, CHILD_TOKEN, MT_AMOUNT, 0n], {
+          account: alice.account,
+          value: 1n // Accidental ETH
+        }),
+        /ZapUniV4MCV2__InvalidETHAmount/
       );
     });
   });

@@ -92,6 +92,7 @@ contract ZapUniV4MCV2 {
         uint256 totalHuntRequired = huntRequired + royalty;
 
         if (fromToken == HUNT) {
+            if (msg.value != 0) revert ZapUniV4MCV2__InvalidETHAmount();
             if (totalHuntRequired > maxFromTokenAmount) revert ZapUniV4MCV2__SlippageExceeded();
             IERC20(HUNT).safeTransferFrom(msg.sender, address(this), totalHuntRequired);
             fromTokenUsed = totalHuntRequired;
@@ -132,6 +133,7 @@ contract ZapUniV4MCV2 {
 
         uint256 huntAmount;
         if (fromToken == HUNT) {
+            if (msg.value != 0) revert ZapUniV4MCV2__InvalidETHAmount();
             IERC20(HUNT).safeTransferFrom(msg.sender, address(this), fromTokenAmount);
             huntAmount = fromTokenAmount;
         } else {
@@ -242,6 +244,7 @@ contract ZapUniV4MCV2 {
         if (fromToken == ETH_ADDRESS) {
             if (msg.value != amount) revert ZapUniV4MCV2__InvalidETHAmount();
         } else if (fromToken == MT || fromToken == USDC) {
+            if (msg.value != 0) revert ZapUniV4MCV2__InvalidETHAmount();
             IERC20(fromToken).safeTransferFrom(msg.sender, address(this), amount);
         } else {
             revert ZapUniV4MCV2__UnsupportedToken();
