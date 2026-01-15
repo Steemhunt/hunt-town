@@ -15,6 +15,7 @@ npx hardhat keystore set BASE_PRIVATE_KEY
 npx hardhat ignition deploy ignition/modules/Mintpad.ts --network base --verify --reset
 npx hardhat ignition deploy ignition/modules/ProjectUpdates.ts --network base --verify --reset
 npx hardhat ignition deploy ignition/modules/ZapUniV4MCV2.ts --network base --verify --reset
+npx hardhat ignition deploy ignition/modules/HuntDrop.ts --network base --verify --reset
 
 # if verification failed
 npx hardhat ignition verify chain-8453 --network base
@@ -25,3 +26,4 @@ npx hardhat ignition verify chain-8453 --network base
 - Mintpad: [0xfb51D2120c27bB56D91221042cb2dd2866a647fE](https://basescan.org/address/0xfb51D2120c27bB56D91221042cb2dd2866a647fE#code)
 - ProjectUpdates: [0x1D3EecD659CE2D0054b5EB939db791aAC1eA9ed6](https://basescan.org/address/0x1D3EecD659CE2D0054b5EB939db791aAC1eA9ed6#code)
 - ZapUniV4MCV2: [0xa2e7BcA51A84Ed635909a8E845d5f66602742A75](https://basescan.org/address/0xa2e7BcA51A84Ed635909a8E845d5f66602742A75#code)
+- HuntDrop: [0x6Bc50949F2b1301082Aa863A7C4869f49099Cd8b](https://basescan.org/address/0x6Bc50949F2b1301082Aa863A7C4869f49099Cd8b#code)
