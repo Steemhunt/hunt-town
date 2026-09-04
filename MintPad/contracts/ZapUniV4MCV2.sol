@@ -3,12 +3,14 @@ pragma solidity ^0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IUniversalRouter, IAllowanceTransfer, IHooks, PoolKey, ExactInputSingleParams, ExactOutputSingleParams, QuoteExactSingleParams, IV4Quoter, IMCV2_Bond, IMCV2_BondPeriphery, Commands, Actions, ActionConstants} from "./Interfaces.sol";
+import {IUniversalRouter, IAllowanceTransfer, PathKey, ExactInputParams, ExactOutputParams, QuoteExactParams, IV4Quoter, IMCV2_Bond, IMCV2_BondPeriphery, Commands, Actions, ActionConstants} from "./Interfaces.sol";
 
 /**
  * @title ZapUniV4MCV2
  * @notice Zap contract to mint HUNT-backed tokens on Mint Club V2 using various input tokens
- * @dev Supports HUNT (direct), MT, USDC, and ETH as input tokens via Uniswap V4 swaps
+ * @dev Supports HUNT (direct), MT, USDC, and ETH as input tokens via Uniswap V4 swaps.
+ *      The caller supplies the Uniswap V4 swap path (fromToken -> ... -> HUNT), so pool migrations
+ *      and multi-hop routes never require a redeploy.
  */
 contract ZapUniV4MCV2 {
     using SafeERC20 for IERC20;
@@ -18,10 +20,6 @@ contract ZapUniV4MCV2 {
     address public constant MT = 0xFf45161474C39cB00699070Dd49582e417b57a7E;
     address public constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address public constant ETH_ADDRESS = address(0);
-
-    // ============ Uniswap V4 Pool Parameters (0.3% fee) ============
-    uint24 public constant POOL_FEE = 3000;
-    int24 public constant TICK_SPACING = 60;
 
     // ============ External Contracts (Base Mainnet) ============
     IUniversalRouter public constant UNIVERSAL_ROUTER = IUniversalRouter(0x6fF5693b99212Da76ad316178A184AB56D299b43);
@@ -34,6 +32,7 @@ contract ZapUniV4MCV2 {
     // ============ Errors ============
     error ZapUniV4MCV2__UnsupportedToken();
     error ZapUniV4MCV2__InvalidAmount();
+    error ZapUniV4MCV2__InvalidPath();
     error ZapUniV4MCV2__SlippageExceeded();
     error ZapUniV4MCV2__InsufficientHUNTReceived();
     error ZapUniV4MCV2__InvalidETHAmount();
@@ -78,13 +77,15 @@ contract ZapUniV4MCV2 {
      * @param huntChildToken The HUNT-backed token to mint
      * @param huntChildAmount Exact amount of child tokens to mint
      * @param maxFromTokenAmount Maximum fromToken to spend (slippage protection)
+     * @param path Uniswap V4 swap path from fromToken to HUNT (see `_validatePath`; ignored when fromToken is HUNT)
      * @return fromTokenUsed Actual fromToken spent
      */
     function mint(
         address fromToken,
         address huntChildToken,
         uint256 huntChildAmount,
-        uint256 maxFromTokenAmount
+        uint256 maxFromTokenAmount,
+        PathKey[] calldata path
     ) external payable returns (uint256 fromTokenUsed) {
         if (huntChildAmount == 0) revert ZapUniV4MCV2__InvalidAmount();
 
@@ -99,7 +100,7 @@ contract ZapUniV4MCV2 {
         } else {
             _validateAndTransferInput(fromToken, maxFromTokenAmount);
             // Use exactOutput swap to get exactly the HUNT needed
-            fromTokenUsed = _executeV4SwapExactOutput(fromToken, huntRequired, maxFromTokenAmount);
+            fromTokenUsed = _executeV4SwapExactOutput(fromToken, huntRequired, maxFromTokenAmount, path);
             // Refund unused input token (same token type, not HUNT)
             _refundToken(fromToken, maxFromTokenAmount - fromTokenUsed);
         }
@@ -121,13 +122,15 @@ contract ZapUniV4MCV2 {
      * @param huntChildToken The HUNT-backed token to mint
      * @param fromTokenAmount Exact fromToken to spend
      * @param minHuntChildAmount Minimum child tokens to receive (slippage protection)
+     * @param path Uniswap V4 swap path from fromToken to HUNT (see `_validatePath`; ignored when fromToken is HUNT)
      * @return huntChildAmount Actual child tokens minted
      */
     function mintReverse(
         address fromToken,
         address huntChildToken,
         uint256 fromTokenAmount,
-        uint256 minHuntChildAmount
+        uint256 minHuntChildAmount,
+        PathKey[] calldata path
     ) external payable returns (uint256 huntChildAmount) {
         if (fromTokenAmount == 0) revert ZapUniV4MCV2__InvalidAmount();
 
@@ -138,7 +141,7 @@ contract ZapUniV4MCV2 {
             huntAmount = fromTokenAmount;
         } else {
             _validateAndTransferInput(fromToken, fromTokenAmount);
-            huntAmount = _executeV4Swap(fromToken, fromTokenAmount);
+            huntAmount = _executeV4Swap(fromToken, fromTokenAmount, path);
         }
 
         try BOND_PERIPHERY.mintWithReserveAmount(huntChildToken, huntAmount, minHuntChildAmount, msg.sender) returns (
@@ -162,13 +165,15 @@ contract ZapUniV4MCV2 {
      * @param fromToken Input token (HUNT, MT, USDC, or address(0) for ETH)
      * @param huntChildToken The HUNT-backed token to mint
      * @param huntChildAmount Exact amount of child tokens to mint
+     * @param path Uniswap V4 swap path from fromToken to HUNT (see `_validatePath`; ignored when fromToken is HUNT)
      * @return fromTokenAmount Estimated fromToken needed
      * @return huntRequired Total HUNT needed (already includes royalty)
      */
     function estimateMint(
         address fromToken,
         address huntChildToken,
-        uint256 huntChildAmount
+        uint256 huntChildAmount,
+        PathKey[] calldata path
     ) external returns (uint256 fromTokenAmount, uint256 huntRequired) {
         (huntRequired, ) = BOND.getReserveForToken(huntChildToken, huntChildAmount);
 
@@ -176,7 +181,13 @@ contract ZapUniV4MCV2 {
             fromTokenAmount = huntRequired;
         } else {
             // Use Quoter to estimate swap input needed for exact HUNT output
-            (fromTokenAmount, ) = QUOTER.quoteExactOutputSingle(_buildQuoteParams(fromToken, uint128(huntRequired)));
+            (fromTokenAmount, ) = QUOTER.quoteExactOutput(
+                QuoteExactParams({
+                    exactCurrency: HUNT,
+                    path: _toExactOutputPath(fromToken, path),
+                    exactAmount: uint128(huntRequired)
+                })
+            );
         }
     }
 
@@ -186,45 +197,27 @@ contract ZapUniV4MCV2 {
      * @param fromToken Input token (HUNT, MT, USDC, or address(0) for ETH)
      * @param huntChildToken The HUNT-backed token to mint
      * @param fromTokenAmount Exact fromToken to spend
+     * @param path Uniswap V4 swap path from fromToken to HUNT (see `_validatePath`; ignored when fromToken is HUNT)
      * @return huntChildAmount Estimated child tokens to receive
      * @return huntAmount HUNT amount after swap (or direct if fromToken is HUNT)
      */
     function estimateMintReverse(
         address fromToken,
         address huntChildToken,
-        uint256 fromTokenAmount
+        uint256 fromTokenAmount,
+        PathKey[] calldata path
     ) external returns (uint256 huntChildAmount, uint256 huntAmount) {
         if (fromToken == HUNT) {
             huntAmount = fromTokenAmount;
         } else {
+            _validatePath(path);
             // Use Quoter to estimate HUNT output from swap
-            (huntAmount, ) = QUOTER.quoteExactInputSingle(_buildQuoteParams(fromToken, uint128(fromTokenAmount)));
+            (huntAmount, ) = QUOTER.quoteExactInput(
+                QuoteExactParams({exactCurrency: fromToken, path: path, exactAmount: uint128(fromTokenAmount)})
+            );
         }
 
         (huntChildAmount, ) = BOND_PERIPHERY.getTokensForReserve(huntChildToken, huntAmount, false);
-    }
-
-    /**
-     * @notice Build QuoteExactSingleParams for the given token
-     */
-    function _buildQuoteParams(address fromToken, uint128 amount) private pure returns (QuoteExactSingleParams memory) {
-        (address currency0, address currency1, bool zeroForOne) = fromToken == ETH_ADDRESS
-            ? (ETH_ADDRESS, HUNT, true)
-            : (HUNT, fromToken, false);
-
-        return
-            QuoteExactSingleParams({
-                poolKey: PoolKey({
-                    currency0: currency0,
-                    currency1: currency1,
-                    fee: POOL_FEE,
-                    tickSpacing: TICK_SPACING,
-                    hooks: IHooks(address(0))
-                }),
-                zeroForOne: zeroForOne,
-                exactAmount: amount,
-                hookData: bytes("")
-            });
     }
 
     // ============ Internal Functions ============
@@ -249,19 +242,45 @@ contract ZapUniV4MCV2 {
     }
 
     /**
-     * @notice Execute V4 exactInput swap to HUNT (used by mintReverse)
-     * @dev Pool configs: ETH/HUNT (zeroForOne=true), HUNT/USDC & HUNT/MT (zeroForOne=false)
+     * @notice Validate a swap path
+     * @dev `path[i].intermediateCurrency` is the currency received from hop i, so the last hop must output HUNT
      */
-    function _executeV4Swap(address fromToken, uint256 amountIn) private returns (uint256 huntReceived) {
-        uint256 huntBefore = IERC20(HUNT).balanceOf(address(this));
+    function _validatePath(PathKey[] calldata path) private pure {
+        if (path.length == 0 || path[path.length - 1].intermediateCurrency != HUNT) revert ZapUniV4MCV2__InvalidPath();
+    }
 
-        (address currency0, address currency1, bool zeroForOne) = fromToken == ETH_ADDRESS
-            ? (ETH_ADDRESS, HUNT, true)
-            : (HUNT, fromToken, false);
+    /**
+     * @notice Convert a path into the exact-output format expected by the router and quoter
+     * @dev Exact-output paths list the INPUT currency of each hop (same hop order, same pool params)
+     */
+    function _toExactOutputPath(
+        address fromToken,
+        PathKey[] calldata path
+    ) private pure returns (PathKey[] memory outPath) {
+        _validatePath(path);
+
+        outPath = new PathKey[](path.length);
+        address currencyIn = fromToken;
+        for (uint256 i = 0; i < path.length; i++) {
+            outPath[i] = PathKey(currencyIn, path[i].fee, path[i].tickSpacing, path[i].hooks, path[i].hookData);
+            currencyIn = path[i].intermediateCurrency;
+        }
+    }
+
+    /**
+     * @notice Execute V4 exactInput swap to HUNT (used by mintReverse)
+     */
+    function _executeV4Swap(
+        address fromToken,
+        uint256 amountIn,
+        PathKey[] calldata path
+    ) private returns (uint256 huntReceived) {
+        _validatePath(path);
+        uint256 huntBefore = IERC20(HUNT).balanceOf(address(this));
 
         bytes memory commands = abi.encodePacked(uint8(Commands.V4_SWAP));
         bytes[] memory inputs = new bytes[](1);
-        inputs[0] = _buildV4SwapInputExactIn(currency0, currency1, zeroForOne, uint128(amountIn));
+        inputs[0] = _buildV4SwapInputExactIn(fromToken, uint128(amountIn), path);
 
         if (fromToken == ETH_ADDRESS) {
             UNIVERSAL_ROUTER.execute{value: amountIn}(commands, inputs, block.timestamp);
@@ -277,28 +296,20 @@ contract ZapUniV4MCV2 {
      * @param fromToken Input token (MT, USDC, or ETH)
      * @param huntAmountOut Exact HUNT amount to receive
      * @param amountInMax Maximum input token to spend
+     * @param path Uniswap V4 swap path from fromToken to HUNT
      * @return amountIn Actual input token spent
      */
     function _executeV4SwapExactOutput(
         address fromToken,
         uint256 huntAmountOut,
-        uint256 amountInMax
+        uint256 amountInMax,
+        PathKey[] calldata path
     ) private returns (uint256 amountIn) {
         uint256 balanceBefore = fromToken == ETH_ADDRESS
             ? address(this).balance
             : IERC20(fromToken).balanceOf(address(this));
 
-        (address currency0, address currency1, bool zeroForOne) = fromToken == ETH_ADDRESS
-            ? (ETH_ADDRESS, HUNT, true)
-            : (HUNT, fromToken, false);
-
-        bytes memory swapInput = _buildV4SwapInputExactOut(
-            currency0,
-            currency1,
-            zeroForOne,
-            uint128(huntAmountOut),
-            uint128(amountInMax)
-        );
+        bytes memory swapInput = _buildV4SwapInputExactOut(fromToken, uint128(huntAmountOut), uint128(amountInMax), path);
 
         if (fromToken == ETH_ADDRESS) {
             // For ETH: V4_SWAP + SWEEP to recover unused ETH
@@ -340,86 +351,55 @@ contract ZapUniV4MCV2 {
     }
 
     /**
-     * @notice Build V4 swap input for exact input single swap
+     * @notice Build V4 swap input for an exact input swap along the path
      */
     function _buildV4SwapInputExactIn(
-        address currency0,
-        address currency1,
-        bool zeroForOne,
-        uint128 amountIn
+        address fromToken,
+        uint128 amountIn,
+        PathKey[] calldata path
     ) private view returns (bytes memory) {
         bytes memory actions = abi.encodePacked(
-            uint8(Actions.SWAP_EXACT_IN_SINGLE),
+            uint8(Actions.SWAP_EXACT_IN),
             uint8(Actions.SETTLE_ALL),
             uint8(Actions.TAKE)
         );
 
         bytes[] memory params = new bytes[](3);
-
-        PoolKey memory poolKey = PoolKey({
-            currency0: currency0,
-            currency1: currency1,
-            fee: POOL_FEE,
-            tickSpacing: TICK_SPACING,
-            hooks: IHooks(address(0))
-        });
-
-        (address settleToken, address takeToken) = zeroForOne ? (currency0, currency1) : (currency1, currency0);
-
         params[0] = abi.encode(
-            ExactInputSingleParams({
-                poolKey: poolKey,
-                zeroForOne: zeroForOne,
-                amountIn: amountIn,
-                amountOutMinimum: 0,
-                hookData: bytes("")
-            })
+            ExactInputParams({currencyIn: fromToken, path: path, amountIn: amountIn, amountOutMinimum: 0})
         );
-        params[1] = abi.encode(settleToken, amountIn);
-        params[2] = abi.encode(takeToken, address(this), ActionConstants.OPEN_DELTA);
+        params[1] = abi.encode(fromToken, amountIn); // SETTLE_ALL: (currency, maxAmount)
+        params[2] = abi.encode(HUNT, address(this), ActionConstants.OPEN_DELTA); // TAKE: (currency, recipient, amount)
 
         return abi.encode(actions, params);
     }
 
     /**
-     * @notice Build V4 swap input for exact output single swap
+     * @notice Build V4 swap input for an exact output swap along the path
      */
     function _buildV4SwapInputExactOut(
-        address currency0,
-        address currency1,
-        bool zeroForOne,
+        address fromToken,
         uint128 amountOut,
-        uint128 amountInMax
+        uint128 amountInMax,
+        PathKey[] calldata path
     ) private view returns (bytes memory) {
         bytes memory actions = abi.encodePacked(
-            uint8(Actions.SWAP_EXACT_OUT_SINGLE),
+            uint8(Actions.SWAP_EXACT_OUT),
             uint8(Actions.SETTLE_ALL),
             uint8(Actions.TAKE)
         );
 
         bytes[] memory params = new bytes[](3);
-
-        PoolKey memory poolKey = PoolKey({
-            currency0: currency0,
-            currency1: currency1,
-            fee: POOL_FEE,
-            tickSpacing: TICK_SPACING,
-            hooks: IHooks(address(0))
-        });
-
-        (address settleToken, address takeToken) = zeroForOne ? (currency0, currency1) : (currency1, currency0);
-
         params[0] = abi.encode(
-            ExactOutputSingleParams({
-                poolKey: poolKey,
-                zeroForOne: zeroForOne,
+            ExactOutputParams({
+                currencyOut: HUNT,
+                path: _toExactOutputPath(fromToken, path),
                 amountOut: amountOut,
-                amountInMaximum: amountInMax,
-                hookData: bytes("")
+                amountInMaximum: amountInMax
             })
         );
-        params[1] = abi.encode(settleToken, amountInMax); // SETTLE_ALL: (currency, maxAmount)
-        params[2] = abi.encode(takeToken, address(this), ActionConstants.OPEN_DELTA); // TAKE: (currency, recipient, amount)
+        params[1] = abi.encode(fromToken, amountInMax); // SETTLE_ALL: (currency, maxAmount)
+        params[2] = abi.encode(HUNT, address(this), ActionConstants.OPEN_DELTA); // TAKE: (currency, recipient, amount)
 
         return abi.encode(actions, params);
     }

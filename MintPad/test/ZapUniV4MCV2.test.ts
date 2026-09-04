@@ -26,8 +26,24 @@ const USDC_AMOUNT = parseUnits("100", 6);
 const ETH_AMOUNT = parseEther("0.01");
 const CHILD_AMOUNT = parseEther("100");
 
+// Uniswap V4 swap path (fromToken -> ... -> HUNT) for each payment token
+const hop = (intermediateCurrency: string, fee: number, tickSpacing: number) => ({
+  intermediateCurrency,
+  fee,
+  tickSpacing,
+  hooks: ZERO_ADDRESS,
+  hookData: "0x"
+});
+const ETH_HUNT_HOP = hop(HUNT, 10000, 200); // ETH/HUNT 1%
+const PATHS: Record<string, ReturnType<typeof hop>[]> = {
+  [ZERO_ADDRESS]: [ETH_HUNT_HOP],
+  [USDC.toLowerCase()]: [hop(ZERO_ADDRESS, 500, 10), ETH_HUNT_HOP], // USDC -> ETH (0.05%) -> HUNT
+  [MT.toLowerCase()]: [hop(HUNT, 3000, 60)] // HUNT/MT 0.3%
+};
+const pathFor = (fromToken: string) => PATHS[fromToken.toLowerCase()] ?? [];
+
 describe("ZapUniV4MCV2", async function () {
-  const connection = await network.connect("baseFork");
+  const connection = await network.connect("baseForkLatest");
   const { viem, networkHelpers } = connection;
   const { impersonateAccount, stopImpersonatingAccount, setBalance } = networkHelpers;
 
@@ -82,7 +98,7 @@ describe("ZapUniV4MCV2", async function () {
     // Fund alice
     await impersonateAccount(WHALE);
     await huntToken.write.transfer([alice.account.address, HUNT_AMOUNT * 10n], { account: WHALE });
-    await mtToken.write.transfer([alice.account.address, MT_AMOUNT * 10n], { account: WHALE });
+    await mtToken.write.transfer([alice.account.address, MT_AMOUNT * 2n], { account: WHALE });
     await usdcToken.write.transfer([alice.account.address, USDC_AMOUNT * 10n], { account: WHALE });
     await stopImpersonatingAccount(WHALE);
     await setBalance(alice.account.address, parseEther("10"));
@@ -114,7 +130,7 @@ describe("ZapUniV4MCV2", async function () {
     ethValue?: bigint
   ) {
     const before = await childToken.read.balanceOf([alice.account.address]);
-    await zap.write.mint([fromToken, CHILD_TOKEN, childAmount, maxAmount], {
+    await zap.write.mint([fromToken, CHILD_TOKEN, childAmount, maxAmount, pathFor(fromToken)], {
       account: alice.account,
       value: ethValue
     });
@@ -155,14 +171,14 @@ describe("ZapUniV4MCV2", async function () {
     it("should revert if HUNT slippage exceeded", async function () {
       const huntRequired = await getHuntRequired(bond, CHILD_AMOUNT);
       await assert.rejects(
-        zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, huntRequired - 1n], { account: alice.account }),
+        zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, huntRequired - 1n, pathFor(HUNT)], { account: alice.account }),
         /ZapUniV4MCV2__SlippageExceeded/
       );
     });
 
     it("should revert if ETH amount mismatch", async function () {
       await assert.rejects(
-        zap.write.mint([ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT, ETH_AMOUNT], {
+        zap.write.mint([ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT, ETH_AMOUNT, pathFor(ZERO_ADDRESS)], {
           account: alice.account,
           value: ETH_AMOUNT + 1n
         }),
@@ -172,14 +188,14 @@ describe("ZapUniV4MCV2", async function () {
 
     it("should revert with zero amount", async function () {
       await assert.rejects(
-        zap.write.mint([HUNT, CHILD_TOKEN, 0n, HUNT_AMOUNT], { account: alice.account }),
+        zap.write.mint([HUNT, CHILD_TOKEN, 0n, HUNT_AMOUNT, pathFor(HUNT)], { account: alice.account }),
         /ZapUniV4MCV2__InvalidAmount/
       );
     });
 
     it("should revert with unsupported token", async function () {
       await assert.rejects(
-        zap.write.mint(["0x1234567890123456789012345678901234567890", CHILD_TOKEN, CHILD_AMOUNT, HUNT_AMOUNT], {
+        zap.write.mint(["0x1234567890123456789012345678901234567890", CHILD_TOKEN, CHILD_AMOUNT, HUNT_AMOUNT, []], {
           account: alice.account
         }),
         /ZapUniV4MCV2__UnsupportedToken/
@@ -189,7 +205,7 @@ describe("ZapUniV4MCV2", async function () {
     it("should revert if ETH sent with HUNT payment", async function () {
       const huntRequired = await getHuntRequired(bond, CHILD_AMOUNT);
       await assert.rejects(
-        zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, huntRequired], {
+        zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, huntRequired, pathFor(HUNT)], {
           account: alice.account,
           value: 1n // Accidental ETH
         }),
@@ -199,7 +215,7 @@ describe("ZapUniV4MCV2", async function () {
 
     it("should revert if ETH sent with ERC20 payment", async function () {
       await assert.rejects(
-        zap.write.mint([MT, CHILD_TOKEN, CHILD_AMOUNT, MT_AMOUNT], {
+        zap.write.mint([MT, CHILD_TOKEN, CHILD_AMOUNT, MT_AMOUNT, pathFor(MT)], {
           account: alice.account,
           value: 1n // Accidental ETH
         }),
@@ -212,7 +228,7 @@ describe("ZapUniV4MCV2", async function () {
     it("should mint with exact HUNT input", async function () {
       const [estimated] = await bondPeriphery.read.getTokensForReserve([CHILD_TOKEN, HUNT_AMOUNT, true]);
       const before = await childToken.read.balanceOf([alice.account.address]);
-      await zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, 0n], { account: alice.account });
+      await zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, 0n, pathFor(HUNT)], { account: alice.account });
       const received = (await childToken.read.balanceOf([alice.account.address])) - before;
 
       assert.ok(received > 0n);
@@ -221,7 +237,7 @@ describe("ZapUniV4MCV2", async function () {
 
     it("should mint with ETH swap", async function () {
       const before = await childToken.read.balanceOf([alice.account.address]);
-      await zap.write.mintReverse([ZERO_ADDRESS, CHILD_TOKEN, ETH_AMOUNT, 0n], {
+      await zap.write.mintReverse([ZERO_ADDRESS, CHILD_TOKEN, ETH_AMOUNT, 0n, pathFor(ZERO_ADDRESS)], {
         account: alice.account,
         value: ETH_AMOUNT
       });
@@ -230,33 +246,34 @@ describe("ZapUniV4MCV2", async function () {
 
     it("should mint with MT swap", async function () {
       const before = await childToken.read.balanceOf([alice.account.address]);
-      await zap.write.mintReverse([MT, CHILD_TOKEN, MT_AMOUNT, 0n], { account: alice.account });
+      await zap.write.mintReverse([MT, CHILD_TOKEN, MT_AMOUNT, 0n, pathFor(MT)], { account: alice.account });
       assert.ok((await childToken.read.balanceOf([alice.account.address])) > before);
     });
 
     it("should mint with USDC swap", async function () {
       const before = await childToken.read.balanceOf([alice.account.address]);
-      await zap.write.mintReverse([USDC, CHILD_TOKEN, USDC_AMOUNT, 0n], { account: alice.account });
+      await zap.write.mintReverse([USDC, CHILD_TOKEN, USDC_AMOUNT, 0n, pathFor(USDC)], { account: alice.account });
       assert.ok((await childToken.read.balanceOf([alice.account.address])) > before);
     });
 
     it("should revert if minHuntChildAmount not met", async function () {
+      const [estimated] = await bondPeriphery.read.getTokensForReserve([CHILD_TOKEN, HUNT_AMOUNT, true]);
       await assert.rejects(
-        zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, parseEther("152")], { account: alice.account }),
+        zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, estimated * 2n, pathFor(HUNT)], { account: alice.account }),
         /ZapUniV4MCV2__SlippageExceeded/
       );
     });
 
     it("should revert with zero amount", async function () {
       await assert.rejects(
-        zap.write.mintReverse([HUNT, CHILD_TOKEN, 0n, 0n], { account: alice.account }),
+        zap.write.mintReverse([HUNT, CHILD_TOKEN, 0n, 0n, pathFor(HUNT)], { account: alice.account }),
         /ZapUniV4MCV2__InvalidAmount/
       );
     });
 
     it("should revert if ETH sent with HUNT payment", async function () {
       await assert.rejects(
-        zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, 0n], {
+        zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, 0n, pathFor(HUNT)], {
           account: alice.account,
           value: 1n // Accidental ETH
         }),
@@ -266,7 +283,7 @@ describe("ZapUniV4MCV2", async function () {
 
     it("should revert if ETH sent with ERC20 payment", async function () {
       await assert.rejects(
-        zap.write.mintReverse([MT, CHILD_TOKEN, MT_AMOUNT, 0n], {
+        zap.write.mintReverse([MT, CHILD_TOKEN, MT_AMOUNT, 0n, pathFor(MT)], {
           account: alice.account,
           value: 1n // Accidental ETH
         }),
@@ -285,7 +302,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMint",
-        args: [MT, CHILD_TOKEN, CHILD_AMOUNT]
+        args: [MT, CHILD_TOKEN, CHILD_AMOUNT, pathFor(MT)]
       });
       const [estimatedMT] = result;
 
@@ -293,7 +310,7 @@ describe("ZapUniV4MCV2", async function () {
       const mtToSend = estimatedMT * 2n;
       const mtBefore = await mtToken.read.balanceOf([alice.account.address]);
 
-      await zap.write.mint([MT, CHILD_TOKEN, CHILD_AMOUNT, mtToSend], { account: alice.account });
+      await zap.write.mint([MT, CHILD_TOKEN, CHILD_AMOUNT, mtToSend, pathFor(MT)], { account: alice.account });
 
       const mtAfter = await mtToken.read.balanceOf([alice.account.address]);
       const mtUsed = mtBefore - mtAfter;
@@ -311,7 +328,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMint",
-        args: [ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT]
+        args: [ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT, pathFor(ZERO_ADDRESS)]
       });
       const [estimatedETH] = result;
 
@@ -319,7 +336,7 @@ describe("ZapUniV4MCV2", async function () {
       const ethToSend = estimatedETH * 2n;
       const ethBefore = await publicClient.getBalance({ address: alice.account.address });
 
-      await zap.write.mint([ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT, ethToSend], {
+      await zap.write.mint([ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT, ethToSend, pathFor(ZERO_ADDRESS)], {
         account: alice.account,
         value: ethToSend
       });
@@ -332,15 +349,75 @@ describe("ZapUniV4MCV2", async function () {
     });
   });
 
+  describe("Swap path", function () {
+    it("should mint through the direct HUNT/USDC pool with a single-hop path", async function () {
+      const before = await childToken.read.balanceOf([alice.account.address]);
+      await zap.write.mintReverse([USDC, CHILD_TOKEN, USDC_AMOUNT, 0n, [hop(HUNT, 10000, 100)]], {
+        account: alice.account
+      });
+      assert.ok((await childToken.read.balanceOf([alice.account.address])) > before);
+    });
+
+    it("multi-hop estimateMint should match the actual mint", async function () {
+      const publicClient = await viem.getPublicClient();
+      const usdcToken = getContract({ address: USDC, abi: erc20Abi, client: publicClient });
+
+      const { result } = await publicClient.simulateContract({
+        address: zap.address,
+        abi: zap.abi,
+        functionName: "estimateMint",
+        args: [USDC, CHILD_TOKEN, CHILD_AMOUNT, pathFor(USDC)]
+      });
+      const [estimatedUSDC] = result;
+      const maxUSDC = (estimatedUSDC * 101n) / 100n;
+
+      const usdcBefore = await usdcToken.read.balanceOf([alice.account.address]);
+      await mintAndAssert(zap, childToken, alice, USDC, CHILD_AMOUNT, maxUSDC);
+      const usdcUsed = usdcBefore - (await usdcToken.read.balanceOf([alice.account.address]));
+
+      assert.ok(usdcUsed <= maxUSDC, "Should not exceed max");
+      assert.ok(usdcUsed >= (estimatedUSDC * 99n) / 100n, "Should use roughly the estimated amount");
+    });
+
+    it("should revert with an empty path", async function () {
+      await assert.rejects(
+        zap.write.mintReverse([USDC, CHILD_TOKEN, USDC_AMOUNT, 0n, []], { account: alice.account }),
+        /ZapUniV4MCV2__InvalidPath/
+      );
+    });
+
+    it("should revert if the path does not end with HUNT", async function () {
+      await assert.rejects(
+        zap.write.mint([USDC, CHILD_TOKEN, CHILD_AMOUNT, USDC_AMOUNT, [hop(ZERO_ADDRESS, 500, 10)]], {
+          account: alice.account
+        }),
+        /ZapUniV4MCV2__InvalidPath/
+      );
+    });
+
+    it("should reject estimates with an invalid path", async function () {
+      const publicClient = await viem.getPublicClient();
+      await assert.rejects(
+        publicClient.simulateContract({
+          address: zap.address,
+          abi: zap.abi,
+          functionName: "estimateMintReverse",
+          args: [USDC, CHILD_TOKEN, USDC_AMOUNT, []]
+        }),
+        /ZapUniV4MCV2__InvalidPath/
+      );
+    });
+  });
+
   describe("Events", function () {
     it("should emit Minted event", async function () {
       const huntRequired = await getHuntRequired(bond, CHILD_AMOUNT);
-      const tx = zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, huntRequired], { account: alice.account });
+      const tx = zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, huntRequired, pathFor(HUNT)], { account: alice.account });
       await viem.assertions.emit(tx, zap, "Minted");
     });
 
     it("should emit MintedReverse event", async function () {
-      const tx = zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, 0n], { account: alice.account });
+      const tx = zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, 0n, pathFor(HUNT)], { account: alice.account });
       await viem.assertions.emit(tx, zap, "MintedReverse");
     });
   });
@@ -354,7 +431,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMint",
-        args: [HUNT, CHILD_TOKEN, CHILD_AMOUNT]
+        args: [HUNT, CHILD_TOKEN, CHILD_AMOUNT, pathFor(HUNT)]
       });
 
       const [fromTokenAmount, totalHuntRequired] = result;
@@ -369,7 +446,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMint",
-        args: [MT, CHILD_TOKEN, CHILD_AMOUNT]
+        args: [MT, CHILD_TOKEN, CHILD_AMOUNT, pathFor(MT)]
       });
 
       const [fromTokenAmount, totalHuntRequired] = result;
@@ -384,7 +461,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMint",
-        args: [USDC, CHILD_TOKEN, CHILD_AMOUNT]
+        args: [USDC, CHILD_TOKEN, CHILD_AMOUNT, pathFor(USDC)]
       });
 
       const [fromTokenAmount, totalHuntRequired] = result;
@@ -399,7 +476,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMint",
-        args: [ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT]
+        args: [ZERO_ADDRESS, CHILD_TOKEN, CHILD_AMOUNT, pathFor(ZERO_ADDRESS)]
       });
 
       const [fromTokenAmount, totalHuntRequired] = result;
@@ -414,7 +491,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMint",
-        args: [HUNT, CHILD_TOKEN, CHILD_AMOUNT]
+        args: [HUNT, CHILD_TOKEN, CHILD_AMOUNT, pathFor(HUNT)]
       });
 
       const [estimatedAmount] = result;
@@ -422,7 +499,7 @@ describe("ZapUniV4MCV2", async function () {
       const maxAmount = (estimatedAmount * 101n) / 100n;
 
       const before = await childToken.read.balanceOf([alice.account.address]);
-      await zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, maxAmount], { account: alice.account });
+      await zap.write.mint([HUNT, CHILD_TOKEN, CHILD_AMOUNT, maxAmount, pathFor(HUNT)], { account: alice.account });
       const after = await childToken.read.balanceOf([alice.account.address]);
 
       assert.equal(after - before, CHILD_AMOUNT);
@@ -438,7 +515,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMintReverse",
-        args: [HUNT, CHILD_TOKEN, HUNT_AMOUNT]
+        args: [HUNT, CHILD_TOKEN, HUNT_AMOUNT, pathFor(HUNT)]
       });
 
       const [huntChildAmount, huntAmount] = result;
@@ -453,7 +530,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMintReverse",
-        args: [MT, CHILD_TOKEN, MT_AMOUNT]
+        args: [MT, CHILD_TOKEN, MT_AMOUNT, pathFor(MT)]
       });
 
       const [huntChildAmount, huntAmount] = result;
@@ -468,7 +545,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMintReverse",
-        args: [USDC, CHILD_TOKEN, USDC_AMOUNT]
+        args: [USDC, CHILD_TOKEN, USDC_AMOUNT, pathFor(USDC)]
       });
 
       const [huntChildAmount, huntAmount] = result;
@@ -483,7 +560,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMintReverse",
-        args: [ZERO_ADDRESS, CHILD_TOKEN, ETH_AMOUNT]
+        args: [ZERO_ADDRESS, CHILD_TOKEN, ETH_AMOUNT, pathFor(ZERO_ADDRESS)]
       });
 
       const [huntChildAmount, huntAmount] = result;
@@ -498,7 +575,7 @@ describe("ZapUniV4MCV2", async function () {
         address: zap.address,
         abi: zap.abi,
         functionName: "estimateMintReverse",
-        args: [HUNT, CHILD_TOKEN, HUNT_AMOUNT]
+        args: [HUNT, CHILD_TOKEN, HUNT_AMOUNT, pathFor(HUNT)]
       });
 
       const [estimatedChildAmount] = result;
@@ -506,7 +583,7 @@ describe("ZapUniV4MCV2", async function () {
       const minChildAmount = (estimatedChildAmount * 99n) / 100n;
 
       const before = await childToken.read.balanceOf([alice.account.address]);
-      await zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, minChildAmount], { account: alice.account });
+      await zap.write.mintReverse([HUNT, CHILD_TOKEN, HUNT_AMOUNT, minChildAmount, pathFor(HUNT)], { account: alice.account });
       const received = (await childToken.read.balanceOf([alice.account.address])) - before;
 
       assert.ok(received >= minChildAmount, "Should receive at least minChildAmount");

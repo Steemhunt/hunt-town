@@ -31,6 +31,15 @@ const config: HardhatUserConfig = {
       },
       initialBaseFeePerGas: 100000 // Very low for fork tests
     },
+    // ZapUniV4MCV2 tests need the current Uniswap V4 pool liquidity
+    baseForkLatest: {
+      type: "edr-simulated",
+      forking: {
+        url: process.env.RPC_BASE!,
+        blockNumber: 50856000 // Sep-04-2026 05:55:47 AM +UTC
+      },
+      initialBaseFeePerGas: 100000
+    },
     hardhatMainnet: {
       type: "edr-simulated",
       chainType: "l1"

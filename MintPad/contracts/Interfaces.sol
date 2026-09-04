@@ -13,48 +13,42 @@ interface IAllowanceTransfer {
 
 interface IHooks {}
 
-struct PoolKey {
-    address currency0;
-    address currency1;
+/// @notice One hop of a Uniswap V4 swap path. `intermediateCurrency` is the currency on the far side of the hop.
+struct PathKey {
+    address intermediateCurrency;
     uint24 fee;
     int24 tickSpacing;
     IHooks hooks;
+    bytes hookData;
 }
 
-struct ExactInputSingleParams {
-    PoolKey poolKey;
-    bool zeroForOne;
+struct ExactInputParams {
+    address currencyIn;
+    PathKey[] path;
     uint128 amountIn;
     uint128 amountOutMinimum;
-    bytes hookData;
 }
 
-struct ExactOutputSingleParams {
-    PoolKey poolKey;
-    bool zeroForOne;
+struct ExactOutputParams {
+    address currencyOut;
+    PathKey[] path;
     uint128 amountOut;
     uint128 amountInMaximum;
-    bytes hookData;
 }
 
-struct QuoteExactSingleParams {
-    PoolKey poolKey;
-    bool zeroForOne;
+struct QuoteExactParams {
+    address exactCurrency;
+    PathKey[] path;
     uint128 exactAmount;
-    bytes hookData;
 }
 
 interface IV4Quoter {
-    /// @notice Returns the output amount for a given exact input swap
+    /// @notice Returns the output amount for a given exact input swap along the path
     /// @dev These functions are not view because they revert with the result - call via staticcall
-    function quoteExactInputSingle(
-        QuoteExactSingleParams memory params
-    ) external returns (uint256 amountOut, uint256 gasEstimate);
+    function quoteExactInput(QuoteExactParams memory params) external returns (uint256 amountOut, uint256 gasEstimate);
 
-    /// @notice Returns the input amount for a given exact output swap
-    function quoteExactOutputSingle(
-        QuoteExactSingleParams memory params
-    ) external returns (uint256 amountIn, uint256 gasEstimate);
+    /// @notice Returns the input amount for a given exact output swap along the path
+    function quoteExactOutput(QuoteExactParams memory params) external returns (uint256 amountIn, uint256 gasEstimate);
 }
 
 // ============ Mint Club V2 Interfaces ============
@@ -96,8 +90,8 @@ library Commands {
 }
 
 library Actions {
-    uint256 constant SWAP_EXACT_IN_SINGLE = 0x06;
-    uint256 constant SWAP_EXACT_OUT_SINGLE = 0x08;
+    uint256 constant SWAP_EXACT_IN = 0x07;
+    uint256 constant SWAP_EXACT_OUT = 0x09;
     uint256 constant SETTLE = 0x0b;
     uint256 constant SETTLE_ALL = 0x0c;
     uint256 constant TAKE = 0x0e;
