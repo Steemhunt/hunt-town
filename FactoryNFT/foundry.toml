@@ -1,0 +1,40 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+auto_detect_solc = true
+dynamic_test_linking = false
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 20_000
+via_ir = true
+bytecode_hash = "none"
+fs_permissions = [{ access = "read", path = "./out" }]
+
+compilation_restrictions = [
+    { paths = "src/**", version = "=0.8.37" },
+    { paths = "script/**", version = "=0.8.37" },
+    { paths = "test/*.t.sol", version = "=0.8.37" },
+    { paths = "test/invariant/**", version = "=0.8.37" },
+    { paths = "test/mocks/**", version = "=0.8.37" },
+    { paths = "test/artifacts/**", version = "=0.8.26" },
+    { paths = "lib/v4-core/src/PoolManager.sol", version = "=0.8.26" },
+]
+
+[fuzz]
+runs = 1_000
+
+[invariant]
+runs = 256
+depth = 128
+fail_on_revert = true
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = true
+
+[lint]
+exclude_lints = ["screaming-snake-case-immutable"]

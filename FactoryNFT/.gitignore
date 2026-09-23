@@ -1,0 +1,11 @@
+/lib/
+/out/
+/cache/
+/broadcast/
+/coverage/
+lcov.info
+.env
+/.tools/
+# The parent Hardhat repository ignores every directory named artifacts.
+!/test/artifacts/
+!/test/artifacts/*.sol
