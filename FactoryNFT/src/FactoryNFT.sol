@@ -109,9 +109,9 @@ contract FactoryNFT is ERC1155Supply, ERC2981, Ownable2Step, ReentrancyGuardTran
         emit Redeemed(msg.sender, amount, huntOut, gross - huntOut);
     }
 
-    /// @notice Adds HUNT to the backing of every unit. Reverts if any unit was minted or
-    /// burned after `expectedSupply` was read, so a pending deposit cannot be captured by a
-    /// mint placed in front of it. A plain HUNT transfer also raises NAV but has no such guard.
+    /// @notice Adds HUNT to every unit's backing; reverts if current supply differs from
+    /// `expectedSupply`. Offsetting mints and burns can restore that value and pass the check.
+    /// A plain HUNT transfer also raises NAV but has no supply check.
     function deposit(uint256 amount, uint256 expectedSupply) external nonReentrant {
         if (amount == 0) revert InvalidAmount();
         uint256 supply = totalSupply(TOKEN_ID);

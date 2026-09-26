@@ -72,12 +72,14 @@ them separately returns 950 + 973.75 HUNT.
 
 Product revenue is converted to HUNT externally and added through
 `deposit(amount, expectedSupply)`. The call reverts with `SupplyChanged` when
-any unit was minted or burned after `expectedSupply` was read, so a mint placed
-in front of a pending deposit makes the deposit fail instead of capturing part
-of it. A plain HUNT transfer to the contract also raises NAV but carries no such
-guard, so team deposits always go through `deposit`. Incoming HUNT immediately
-raises NAV; there is no reward checkpoint, claim function, or holding-period
-restriction.
+the total supply at execution differs from `expectedSupply`. It checks the
+current net supply, not the intervening mint/burn history: offsetting mints and
+burns can restore the expected value and let the deposit execute with newly
+minted units included. The guard therefore does not prevent every front-running
+sequence. A plain HUNT transfer to the contract also raises NAV but carries no
+supply check, so team deposits always go through `deposit`. Incoming HUNT
+immediately raises NAV; there is no reward checkpoint, claim function, or
+holding-period restriction.
 
 Operating rules for deposits:
 
@@ -88,9 +90,12 @@ Operating rules for deposits:
   before retrying with the new value. Retrying blindly after a front-running
   mint hands that minter a share of the deposit.
 - The guard does not cover a holder who minted well before a predictable
-  deposit. Keep deposit timing irregular and each deposit small relative to the
-  backing; with the 5% redemption fee, capturing a deposit only pays when it
-  exceeds roughly 5% of the backing after the attacker's own mint.
+  deposit or a sequence that restores the expected supply. Keep deposit timing
+  irregular and each deposit small relative to the backing. For a single mint,
+  deposit and redemption with no other supply changes, the deposit must exceed
+  roughly 5.26% of the backing after the mint to cover the 5% redemption fee,
+  before gas costs; this threshold does not apply to sequences involving other
+  holders' redemptions.
 
 ## Core API and permissions
 
