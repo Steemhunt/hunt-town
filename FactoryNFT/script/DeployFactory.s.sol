@@ -12,7 +12,6 @@ import { FactoryZapRouter } from "../src/periphery/FactoryZapRouter.sol";
 contract DeployFactory is Script {
     address public constant HUNT = 0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5;
     address public constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
-    address public constant TRANSFER_VALIDATOR = 0xA000027A9B2802E1ddf7000061001e5c005A0000;
     address public constant ROYALTY_OPERATOR = 0xdd15e36BEf873Ca3ceC9411c98878734576aDfb2;
 
     function run() external returns (FactoryNFT factory, FactoryZapRouter zap) {
@@ -28,9 +27,7 @@ contract DeployFactory is Script {
         address predicted = vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
         vm.startBroadcast(deployer);
         require(IERC20(HUNT).approve(predicted, 1_000 ether), "Seed approval failed");
-        factory = new FactoryNFT(
-            IERC20(HUNT), owner, seedOwner, metadataURI, ROYALTY_OPERATOR, TRANSFER_VALIDATOR
-        );
+        factory = new FactoryNFT(IERC20(HUNT), owner, seedOwner, metadataURI, ROYALTY_OPERATOR);
         require(address(factory) == predicted, "Deployment nonce changed");
         zap = new FactoryZapRouter(factory, IPoolManager(POOL_MANAGER));
         vm.stopBroadcast();

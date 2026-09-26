@@ -26,9 +26,8 @@ contract DeployFactoryTest is Test {
         DeployFactory deployment = new DeployFactory();
         FactoryTestHunt template = new FactoryTestHunt();
         vm.etch(deployment.HUNT(), address(template).code);
-        // These addresses are only checked for deployed code during construction.
+        // The manager is only checked for deployed code during construction.
         vm.etch(deployment.POOL_MANAGER(), hex"00");
-        vm.etch(deployment.TRANSFER_VALIDATOR(), hex"00");
         vm.chainId(1);
 
         address deployer = makeAddr("deployer");
@@ -63,7 +62,6 @@ contract DeployFactoryTest is Test {
         assertEq(factory.owner(), owner);
         assertEq(factory.uri(0), metadataURI);
         assertEq(factory.royaltyOperator(), deployment.ROYALTY_OPERATOR());
-        assertEq(factory.getTransferValidator(), deployment.TRANSFER_VALIDATOR());
         (address royaltyReceiver, uint256 royaltyAmount) = factory.royaltyInfo(0, 10_000);
         assertEq(royaltyReceiver, deployment.ROYALTY_OPERATOR());
         assertEq(royaltyAmount, 300);

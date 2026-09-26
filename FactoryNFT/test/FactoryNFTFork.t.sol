@@ -11,14 +11,11 @@ import {
 import { IERC2981 } from "@openzeppelin/contracts/interfaces/IERC2981.sol";
 
 import { FactoryNFT } from "../src/FactoryNFT.sol";
-import { ICreatorToken } from "../src/interfaces/ICreatorToken.sol";
 
-/// @notice Optional Ethereum fork checks against real HUNT and the deployed validator address.
-/// @dev Funding uses local storage cheatcodes. These tests neither broadcast transactions nor
-/// prove OpenSea order fulfillment, SignedZone authorization, or a registry security policy.
+/// @notice Optional Ethereum fork checks against real HUNT.
+/// @dev Funding uses local storage cheatcodes. These tests never broadcast transactions.
 contract FactoryNFTForkTest is Test {
     address internal constant HUNT = 0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5;
-    address internal constant STRICT_VALIDATOR = 0xA000027A9B2802E1ddf7000061001e5c005A0000;
     address internal constant SEED_OWNER = address(0x5EED);
     address internal constant ALICE = address(0xA11CE);
     address internal constant ROYALTY_RECEIVER = address(0xFEE);
@@ -48,9 +45,6 @@ contract FactoryNFTForkTest is Test {
 
         assertEq(block.chainid, 1, "MAINNET_RPC_URL must select Ethereum mainnet");
         assertGt(HUNT.code.length, 0, "HUNT must exist at the selected block");
-        assertGt(
-            STRICT_VALIDATOR.code.length, 0, "Strict validator must exist at the selected block"
-        );
         hunt = IERC20(HUNT);
 
         deal(HUNT, address(this), SEED);
@@ -60,12 +54,7 @@ contract FactoryNFTForkTest is Test {
         assertTrue(hunt.approve(predicted, SEED));
         assertEq(hunt.allowance(address(this), predicted), SEED);
         factory = new FactoryNFT(
-            hunt,
-            address(this),
-            SEED_OWNER,
-            "ipfs://factory/{id}.json",
-            ROYALTY_RECEIVER,
-            STRICT_VALIDATOR
+            hunt, address(this), SEED_OWNER, "ipfs://factory/{id}.json", ROYALTY_RECEIVER
         );
         assertEq(address(factory), predicted);
     }
@@ -97,7 +86,6 @@ contract FactoryNFTForkTest is Test {
         assertEq(factory.balanceOf(SEED_OWNER, ID), 1);
         assertEq(factory.totalSupply(ID), 1);
         assertEq(factory.navPerNFT(), 1_100e18);
-        assertEq(factory.getTransferValidator(), STRICT_VALIDATOR);
     }
 
     function testForkRealHuntConstructorRequiresSeedAllowance() public onMainnetFork {
@@ -105,22 +93,16 @@ contract FactoryNFTForkTest is Test {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         assertEq(hunt.allowance(address(this), predicted), 0);
         vm.expectRevert();
-        new FactoryNFT(hunt, address(this), SEED_OWNER, "", ROYALTY_RECEIVER, STRICT_VALIDATOR);
+        new FactoryNFT(hunt, address(this), SEED_OWNER, "", ROYALTY_RECEIVER);
         assertEq(hunt.balanceOf(address(this)), SEED);
         assertEq(hunt.balanceOf(predicted), 0);
     }
 
-    function testForkCreatorInterfaceMetadataAndRoyalty() public onMainnetFork {
-        assertEq(factory.getTransferValidator(), STRICT_VALIDATOR);
+    function testForkInterfaceMetadataAndRoyalty() public onMainnetFork {
         assertTrue(factory.supportsInterface(type(IERC1155).interfaceId));
         assertTrue(factory.supportsInterface(type(IERC1155MetadataURI).interfaceId));
         assertTrue(factory.supportsInterface(type(IERC2981).interfaceId));
-        assertTrue(factory.supportsInterface(type(ICreatorToken).interfaceId));
         assertEq(factory.uri(ID), "ipfs://factory/{id}.json");
-
-        (bytes4 selector, bool isViewFunction) = factory.getTransferValidationFunction();
-        assertEq(selector, bytes4(0x1854b241));
-        assertFalse(isViewFunction);
         (address receiver, uint256 amount) = factory.royaltyInfo(ID, 100 ether);
         assertEq(receiver, ROYALTY_RECEIVER);
         assertEq(amount, 3 ether);

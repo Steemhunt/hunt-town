@@ -6,11 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC1155 } from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import { IERC2981 } from "@openzeppelin/contracts/interfaces/IERC2981.sol";
 import { FactoryNFT } from "../src/FactoryNFT.sol";
-import {
-    FactoryTestHunt,
-    FactoryTestReceiver,
-    FactoryTestTransferValidator
-} from "./mocks/FactoryNFTMocks.sol";
+import { FactoryTestHunt, FactoryTestReceiver } from "./mocks/FactoryNFTMocks.sol";
 
 abstract contract FactoryNFTTestBase is Test {
     uint256 internal constant ID = 0;
@@ -26,50 +22,45 @@ abstract contract FactoryNFTTestBase is Test {
     function setUp() public virtual {
         hunt = new FactoryTestHunt();
         hunt.mint(address(this), SEED);
-        factory = _deployFunded(hunt, TEAM, address(0));
+        factory = _deployFunded(hunt, TEAM);
     }
 
-    function _deployFunded(FactoryTestHunt token, address seedOwner, address validator)
+    function _deployFunded(FactoryTestHunt token, address seedOwner)
         internal
         returns (FactoryNFT deployed)
     {
-        address predicted = _predictFactory(token, seedOwner, validator, bytes32(0));
+        address predicted = _predictFactory(token, seedOwner, bytes32(0));
         token.approve(predicted, SEED);
-        deployed = _deployUnchecked(token, seedOwner, validator, bytes32(0));
+        deployed = _deployUnchecked(token, seedOwner, bytes32(0));
         assertEq(address(deployed), predicted);
     }
 
-    function _predictFactory(
-        FactoryTestHunt token,
-        address seedOwner,
-        address validator,
-        bytes32 salt
-    ) internal view returns (address) {
+    function _predictFactory(FactoryTestHunt token, address seedOwner, bytes32 salt)
+        internal
+        view
+        returns (address)
+    {
         bytes memory args = abi.encode(
             IERC20(address(token)),
             address(this),
             seedOwner,
             "ipfs://factory/{id}.json",
-            ROYALTY_OPERATOR,
-            validator
+            ROYALTY_OPERATOR
         );
         bytes32 initCodeHash = keccak256(abi.encodePacked(type(FactoryNFT).creationCode, args));
         return vm.computeCreate2Address(salt, initCodeHash, address(this));
     }
 
-    function _deployUnchecked(
-        FactoryTestHunt token,
-        address seedOwner,
-        address validator,
-        bytes32 salt
-    ) internal returns (FactoryNFT) {
+    function _deployUnchecked(FactoryTestHunt token, address seedOwner, bytes32 salt)
+        internal
+        returns (FactoryNFT)
+    {
         return new FactoryNFT{ salt: salt }(
             IERC20(address(token)),
             address(this),
             seedOwner,
             "ipfs://factory/{id}.json",
-            ROYALTY_OPERATOR,
-            validator
+            ROYALTY_OPERATOR
         );
     }
 
@@ -101,23 +92,23 @@ contract FactoryNFTEconomicsTest is FactoryNFTTestBase {
     function testConstructorRevertsWithoutSeedApproval() public {
         hunt.mint(address(this), SEED);
         vm.expectRevert();
-        _deployUnchecked(hunt, TEAM, address(0), bytes32(uint256(1)));
+        _deployUnchecked(hunt, TEAM, bytes32(uint256(1)));
     }
 
     function testConstructorRevertsWithoutSeedFunding() public {
-        address predicted = _predictFactory(hunt, TEAM, address(0), bytes32(uint256(1)));
+        address predicted = _predictFactory(hunt, TEAM, bytes32(uint256(1)));
         hunt.approve(predicted, SEED);
         vm.expectRevert();
-        _deployUnchecked(hunt, TEAM, address(0), bytes32(uint256(1)));
+        _deployUnchecked(hunt, TEAM, bytes32(uint256(1)));
     }
 
     function testConstructorRejectsUnderfundedSeedTransfer() public {
         hunt.mint(address(this), SEED);
         hunt.setTransferFee(true);
-        address predicted = _predictFactory(hunt, TEAM, address(0), bytes32(uint256(1)));
+        address predicted = _predictFactory(hunt, TEAM, bytes32(uint256(1)));
         hunt.approve(predicted, SEED);
         vm.expectRevert(FactoryNFT.InexactHuntTransfer.selector);
-        _deployUnchecked(hunt, TEAM, address(0), bytes32(uint256(1)));
+        _deployUnchecked(hunt, TEAM, bytes32(uint256(1)));
         assertEq(hunt.balanceOf(address(this)), SEED);
     }
 
@@ -380,8 +371,6 @@ contract FactoryNFTIntegrationTest is FactoryNFTTestBase {
         factory.setRoyaltyOperator(BOB);
         vm.expectRevert();
         factory.setURI("ipfs://unauthorized");
-        vm.expectRevert();
-        factory.setTransferValidator(address(0));
         vm.stopPrank();
         factory.setRoyaltyOperator(BOB);
         factory.setURI("ipfs://updated/{id}.json");
@@ -440,21 +429,6 @@ contract FactoryNFTIntegrationTest is FactoryNFTTestBase {
         assertEq(hunt.balanceOf(address(factory)), 2 * SEED);
     }
 
-    function testTransferValidatorChecksTransfersButCannotBlockMintOrBurn() public {
-        FactoryTestTransferValidator validator = new FactoryTestTransferValidator();
-        factory.setTransferValidator(address(validator));
-        validator.setRejectTransfers(true);
-        _mintFor(ALICE, 2);
-        assertEq(validator.validationCount(), 0);
-        vm.prank(ALICE);
-        vm.expectRevert(FactoryTestTransferValidator.TransferRejected.selector);
-        factory.safeTransferFrom(ALICE, BOB, ID, 1, "");
-        vm.prank(ALICE);
-        factory.burn(1, 0);
-        assertEq(factory.balanceOf(ALICE, ID), 1);
-        assertEq(validator.validationCount(), 0);
-    }
-
     function testSingleAndBatchTransferCallbacksCannotReenterSupplyChanges() public {
         _mintFor(ALICE, 2);
         FactoryTestReceiver receiver = new FactoryTestReceiver();
@@ -482,77 +456,5 @@ contract FactoryNFTIntegrationTest is FactoryNFTTestBase {
         assertEq(factory.balanceOf(address(receiver), ID), 2);
         assertEq(factory.totalSupply(ID), 3);
         assertEq(hunt.balanceOf(address(factory)), 3 * SEED);
-    }
-
-    function testTransferValidatorReceivesAmountAndOperator() public {
-        _mintFor(ALICE, 3);
-        FactoryTestTransferValidator validator = new FactoryTestTransferValidator();
-        factory.setTransferValidator(address(validator));
-        vm.prank(ALICE);
-        factory.setApprovalForAll(BOB, true);
-        vm.prank(BOB);
-        factory.safeTransferFrom(ALICE, BOB, ID, 2, "");
-        assertEq(validator.validationCount(), 1);
-        assertEq(validator.lastCaller(), BOB);
-        assertEq(validator.lastFrom(), ALICE);
-        assertEq(validator.lastTo(), BOB);
-        assertEq(validator.lastTokenId(), ID);
-        assertEq(validator.lastAmount(), 2);
-        assertEq(factory.totalSupply(ID), 4);
-        assertEq(hunt.balanceOf(address(factory)), 4 * SEED);
-    }
-
-    function testTransferValidatorCannotReenterMintBurnOrTransfer() public {
-        _mintFor(ALICE, 3);
-        FactoryTestTransferValidator validator = new FactoryTestTransferValidator();
-        factory.setTransferValidator(address(validator));
-        bytes[] memory calls = new bytes[](3);
-        calls[0] = abi.encodeCall(FactoryNFT.mint, (1, type(uint256).max, BOB));
-        calls[1] = abi.encodeCall(FactoryNFT.burn, (1, 0));
-        calls[2] = abi.encodeCall(FactoryNFT.safeTransferFrom, (ALICE, BOB, ID, 1, ""));
-        bytes memory expected = abi.encodeWithSignature("ReentrancyGuardReentrantCall()");
-        for (uint256 i; i < calls.length; ++i) {
-            validator.setReentry(factory, calls[i]);
-            vm.prank(ALICE);
-            factory.safeTransferFrom(ALICE, BOB, ID, 1, "");
-            assertFalse(validator.reentrySucceeded());
-            assertEq(validator.reentryResult(), expected);
-        }
-        assertEq(factory.balanceOf(BOB, ID), 3);
-        assertEq(factory.totalSupply(ID), 4);
-        assertEq(hunt.balanceOf(address(factory)), 4 * SEED);
-    }
-
-    function testBatchTransfersCannotBypassTransferValidator() public {
-        _mintFor(ALICE, 3);
-        FactoryTestTransferValidator validator = new FactoryTestTransferValidator();
-        factory.setTransferValidator(address(validator));
-        uint256[] memory ids = new uint256[](1);
-        uint256[] memory amounts = new uint256[](1);
-        ids[0] = ID;
-        amounts[0] = 2;
-        validator.setRejectTransfers(true);
-        vm.prank(ALICE);
-        vm.expectRevert(FactoryTestTransferValidator.TransferRejected.selector);
-        factory.safeBatchTransferFrom(ALICE, BOB, ids, amounts, "");
-        validator.setRejectTransfers(false);
-        vm.prank(ALICE);
-        factory.safeBatchTransferFrom(ALICE, BOB, ids, amounts, "");
-        assertEq(validator.validationCount(), 1);
-        assertEq(validator.lastAmount(), 2);
-        assertEq(factory.balanceOf(BOB, ID), 2);
-    }
-
-    function testOwnerCanDisableValidatorButCannotSetAnEoa() public {
-        vm.expectRevert();
-        factory.setTransferValidator(ALICE);
-        FactoryTestTransferValidator validator = new FactoryTestTransferValidator();
-        factory.setTransferValidator(address(validator));
-        validator.setRejectTransfers(true);
-        factory.setTransferValidator(address(0));
-        _mintFor(ALICE, 1);
-        vm.prank(ALICE);
-        factory.safeTransferFrom(ALICE, BOB, ID, 1, "");
-        assertEq(factory.balanceOf(BOB, ID), 1);
     }
 }

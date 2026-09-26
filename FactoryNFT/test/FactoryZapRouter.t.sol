@@ -228,15 +228,13 @@ contract FactoryZapRouterTest is Test {
         bytes32 initCodeHash = keccak256(
             abi.encodePacked(
                 type(FactoryNFT).creationCode,
-                abi.encode(
-                    hunt, address(this), seedOwner, "ipfs://factory/{id}.json", payer, address(0)
-                )
+                abi.encode(hunt, address(this), seedOwner, "ipfs://factory/{id}.json", payer)
             )
         );
         address predicted = vm.computeCreate2Address(salt, initCodeHash, address(this));
         hunt.approve(predicted, 1_000e18);
         FactoryNFT realFactory = new FactoryNFT{ salt: salt }(
-            hunt, address(this), seedOwner, "ipfs://factory/{id}.json", payer, address(0)
+            hunt, address(this), seedOwner, "ipfs://factory/{id}.json", payer
         );
         FactoryZapRouter realRouter = new FactoryZapRouter(realFactory, manager);
         hunt.mint(address(realFactory), 123e18);

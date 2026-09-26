@@ -14,18 +14,10 @@ import {
 } from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 import { IFactoryNFT } from "./interfaces/IFactoryNFT.sol";
-import { ICreatorToken, ITransferValidator } from "./interfaces/ICreatorToken.sol";
 
 /// @notice Identical ERC1155 units backed directly by HUNT. Incoming HUNT raises NAV;
 /// minting pays current NAV and redemption retains 5% for the remaining units.
-contract FactoryNFT is
-    ERC1155Supply,
-    ERC2981,
-    Ownable2Step,
-    ReentrancyGuardTransient,
-    IFactoryNFT,
-    ICreatorToken
-{
+contract FactoryNFT is ERC1155Supply, ERC2981, Ownable2Step, ReentrancyGuardTransient, IFactoryNFT {
     using SafeERC20 for IERC20;
 
     uint256 public constant TOKEN_ID = 0;
@@ -36,7 +28,6 @@ contract FactoryNFT is
 
     IERC20 public immutable huntToken;
     address public royaltyOperator;
-    address private _transferValidator;
 
     error InvalidAddress();
     error InvalidAmount();
@@ -58,8 +49,7 @@ contract FactoryNFT is
         address initialOwner,
         address seedOwner,
         string memory uri_,
-        address royaltyOperator_,
-        address transferValidator_
+        address royaltyOperator_
     ) ERC1155(uri_) Ownable(initialOwner) {
         if (
             address(huntToken_).code.length == 0 || seedOwner == address(0)
@@ -67,7 +57,6 @@ contract FactoryNFT is
         ) revert InvalidAddress();
         huntToken = huntToken_;
         _setRoyaltyOperator(royaltyOperator_);
-        _setTransferValidator(transferValidator_);
         _pullHunt(msg.sender, INITIAL_NAV);
         _mint(seedOwner, TOKEN_ID, 1, "");
         emit Minted(msg.sender, seedOwner, 1, INITIAL_NAV);
@@ -140,27 +129,13 @@ contract FactoryNFT is
         _setRoyaltyOperator(newOperator);
     }
 
-    function getTransferValidator() external view returns (address) {
-        return _transferValidator;
-    }
-
-    /// @notice Setting zero disables transfer validation. Does not change redemption rights.
-    function setTransferValidator(address validator) external onlyOwner {
-        _setTransferValidator(validator);
-    }
-
-    function getTransferValidationFunction() external pure returns (bytes4, bool) {
-        return (ITransferValidator.validateTransfer.selector, false);
-    }
-
     function supportsInterface(bytes4 interfaceId)
         public
         view
         override(ERC1155, ERC2981)
         returns (bool)
     {
-        return interfaceId == type(ICreatorToken).interfaceId
-            || super.supportsInterface(interfaceId);
+        return super.supportsInterface(interfaceId);
     }
 
     function safeTransferFrom(
@@ -183,23 +158,6 @@ contract FactoryNFT is
         super.safeBatchTransferFrom(from, to, ids, values, data);
     }
 
-    function _update(address from, address to, uint256[] memory ids, uint256[] memory values)
-        internal
-        override
-    {
-        if (ids.length != values.length) {
-            revert ERC1155InvalidArrayLength(ids.length, values.length);
-        }
-        // Mint and redemption use the HUNT accounting above, independently of marketplace policy.
-        if (from != address(0) && to != address(0) && _transferValidator != address(0)) {
-            for (uint256 i; i < ids.length; ++i) {
-                ITransferValidator(_transferValidator)
-                    .validateTransfer(_msgSender(), from, to, ids[i], values[i]);
-            }
-        }
-        super._update(from, to, ids, values);
-    }
-
     function _grossRedemption(uint256 amount) private view returns (uint256) {
         if (amount == 0) revert InvalidAmount();
         uint256 supply = totalSupply(TOKEN_ID);
@@ -220,11 +178,5 @@ contract FactoryNFT is
         emit RoyaltyOperatorUpdated(royaltyOperator, newOperator);
         royaltyOperator = newOperator;
         _setDefaultRoyalty(newOperator, ROYALTY_BPS);
-    }
-
-    function _setTransferValidator(address validator) private {
-        if (validator != address(0) && validator.code.length == 0) revert InvalidAddress();
-        emit TransferValidatorUpdated(_transferValidator, validator);
-        _transferValidator = validator;
     }
 }

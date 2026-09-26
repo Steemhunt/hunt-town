@@ -34,7 +34,6 @@ contract FactoryZapRouterForkTest is Test {
     address internal constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
     IPoolManager internal constant MANAGER =
         IPoolManager(0x000000000004444c5dc75cB358380D2e3dE08A90);
-    address internal constant VALIDATOR = 0xA000027A9B2802E1ddf7000061001e5c005A0000;
     uint256 internal constant INITIAL_NAV = 1_000e18;
     uint256 internal constant DONATION = 123.323e18;
     uint256 internal constant NAV = INITIAL_NAV + DONATION;
@@ -73,7 +72,7 @@ contract FactoryZapRouterForkTest is Test {
         deal(HUNT, address(this), NAV);
         bytes32 salt = keccak256("real mainnet factory zap tests");
         bytes memory constructorArgs = abi.encode(
-            IERC20(HUNT), address(this), seedOwner, "ipfs://factory/{id}.json", receiver, VALIDATOR
+            IERC20(HUNT), address(this), seedOwner, "ipfs://factory/{id}.json", receiver
         );
         address predicted = vm.computeCreate2Address(
             salt,
@@ -82,7 +81,7 @@ contract FactoryZapRouterForkTest is Test {
         );
         IERC20(HUNT).forceApprove(predicted, INITIAL_NAV);
         factory = new FactoryNFT{ salt: salt }(
-            IERC20(HUNT), address(this), seedOwner, "ipfs://factory/{id}.json", receiver, VALIDATOR
+            IERC20(HUNT), address(this), seedOwner, "ipfs://factory/{id}.json", receiver
         );
         assertEq(address(factory), predicted);
         IERC20(HUNT).safeTransfer(address(factory), DONATION);

@@ -109,8 +109,8 @@ from any caller and is permissionless. Mint, burn, deposit and both transfer
 entrypoints reject reentrancy. Contract recipients must accept
 ERC1155 safe-mint/transfer callbacks.
 
-The owner can change the metadata URI, `royaltyOperator`, and transfer validator,
-and transfer ownership through OpenZeppelin's two-step process. The royalty
+The owner can change the metadata URI and `royaltyOperator`, and transfer
+ownership through OpenZeppelin's two-step process. The royalty
 rate is fixed at 3%; the redemption fee is fixed at 5%. The owner has no
 collateral withdrawal, unbacked mint, arbitrary-call or upgrade function.
 FactoryNFT assumes the canonical, exact-transfer HUNT token and does not support
@@ -122,28 +122,14 @@ OpenZeppelin's ERC2981 reports a 3% royalty payable to `royaltyOperator`, initia
 `0xdd15e36BEf873Ca3ceC9411c98878734576aDfb2`. The operator receives marketplace
 currencies, buys HUNT externally, and deposits that HUNT into FactoryNFT.
 
-FactoryNFT implements OpenSea's `ICreatorToken` interface (`0xad0d7f6c`) and calls
-the configured validator's amount-aware `validateTransfer` before each pair in
-a transfer or batch transfer. Mint and redemption bypass marketplace validation.
-`getTransferValidationFunction()` returns `0x1854b241` and `false`. No Limit Break
-token library is imported; the external validator supplies the transfer policy.
+The royalty is reported, not enforced. FactoryNFT integrates no transfer
+validator and restricts no transfer: holders, approved operators, and contracts
+that hold units move them under plain ERC1155 rules, and each marketplace
+decides whether to honor the ERC2981 figure. Units always mint at NAV and
+redeem at 95% of NAV, so secondary prices stay inside that band and enforcement
+machinery would have guarded only part of a 5% spread.
 
-The Ethereum deployment script selects OpenSea's
-`StrictAuthorizedTransferSecurityRegistry` at
-`0xA000027A9B2802E1ddf7000061001e5c005A0000`. It does not require token-type
-registration. An owner may replace the validator; setting it to zero disables
-validation. Validator policy can restrict marketplaces and ordinary transfers,
-but cannot independently withdraw FactoryNFT's HUNT.
-
-After deployment, configure and enable 3% creator earnings in OpenSea Studio.
-Restricted Seaport orders need the supported SignedZone authorization flow.
-Do not broadly exempt marketplace operators as a substitute for that flow.
-Setting a validator alone does not prove royalty enforcement. Local mock tests
-exercise the integration hooks; full OpenSea order fulfillment remains a
-deployment integration check.
-
-References: [OpenSea creator-fee enforcement](https://docs.opensea.io/docs/creator-fee-enforcement),
-[OpenZeppelin ERC2981](https://docs.openzeppelin.com/contracts/5.x/api/token/common).
+References: [OpenZeppelin ERC2981](https://docs.openzeppelin.com/contracts/5.x/api/token/common).
 
 ## V4 minting zap
 
@@ -189,7 +175,7 @@ Prices and routes are chosen off-chain; `maxAmountIn` bounds the user's payment.
 
 - HUNT: `0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5`
 - V4 PoolManager: `0x000000000004444c5dc75cB358380D2e3dE08A90`
-- The royalty operator and validator described above.
+- The royalty operator described above.
 
 Provide `DEPLOYER`, `FACTORY_OWNER`, `SEED_OWNER`, `FACTORY_URI`, and
 `MAINNET_RPC_URL`. The deployer needs at least 1,000 HUNT plus transaction gas.
@@ -209,7 +195,7 @@ private key. Ownership and seed recipient are explicit inputs.
 
 Unit and fuzz tests cover backing arithmetic, rounding, revenue deposits,
 bulk/sequential redemption, reserve conservation, owner permissions, royalties,
-validator hooks, callbacks and transaction rollback. Stateful invariants cover
+callbacks and transaction rollback. Stateful invariants cover
 mint, redeem, deposit, donate and transfer sequences. Zap tests deploy the actual V4
 PoolManager code locally and include the real FactoryNFT implementation.
 
@@ -246,7 +232,7 @@ token code or pool state. They mint two units at a donated NAV of 1,123.323 HUNT
 requiring exactly 2,246.646 HUNT. The three separate `FactoryNFTForkTest` cases
 cover real HUNT seed funding, mint/burn and interface metadata; their block can
 be overridden with `MAINNET_FORK_BLOCK`. Without an RPC URL both suites explicitly
-skip. Fork tests never broadcast and do not test signed OpenSea order fulfillment.
+skip. Fork tests never broadcast.
 
 Additional unit tests inject invalid manager responses, token transfers, mint
 payments and deployment configuration to exercise defensive failure paths.
@@ -270,11 +256,11 @@ compiler paths work without removing any checks.
 
 | Source | Lines | Statements | Branches | Functions |
 | --- | --- | --- | --- | --- |
-| FactoryNFT | 100% (83/83) | 100% (98/98) | 100% (14/14) | 100% (20/20) |
+| FactoryNFT | 100% (64/64) | 100% (74/74) | 100% (11/11) | 100% (15/15) |
 | FactoryZapRouter | 100% (107/107) | 100% (181/181) | 100% (38/38) | 100% (4/4) |
 | DeployFactory | 100% (15/15) | 100% (19/19) | 100% (10/10) | 100% (1/1) |
 
-Verified on September 27, 2026 with the toolchain above: 86 tests passed, zero
+Verified on September 27, 2026 with the toolchain above: 79 tests passed, zero
 failures and zero skips with the mainnet fork enabled at block 26,039,501. This
 includes three fuzz cases with 1,000 runs each and three stateful invariants
 checked over 32,768 actions with zero reverts. The deployment test verifies the
