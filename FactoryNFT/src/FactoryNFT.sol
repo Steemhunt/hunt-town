@@ -44,9 +44,11 @@ contract FactoryNFT is
     error MintPriceExceeded(uint256 required, uint256 maximum);
     error BurnProceedsTooLow(uint256 actual, uint256 minimum);
     error InexactHuntTransfer();
+    error SupplyChanged(uint256 actual, uint256 expected);
 
     event Minted(address indexed payer, address indexed receiver, uint256 amount, uint256 huntIn);
     event Redeemed(address indexed holder, uint256 amount, uint256 huntOut, uint256 retainedFee);
+    event Deposited(address indexed depositor, uint256 huntIn, uint256 supply);
     event RoyaltyOperatorUpdated(address indexed previousOperator, address indexed newOperator);
 
     /// @dev The deployer must preapprove this contract's predicted address for INITIAL_NAV.
@@ -116,6 +118,17 @@ contract FactoryNFT is
         _burn(msg.sender, TOKEN_ID, amount);
         huntToken.safeTransfer(msg.sender, huntOut);
         emit Redeemed(msg.sender, amount, huntOut, gross - huntOut);
+    }
+
+    /// @notice Adds HUNT to the backing of every unit. Reverts if any unit was minted or
+    /// burned after `expectedSupply` was read, so a pending deposit cannot be captured by a
+    /// mint placed in front of it. A plain HUNT transfer also raises NAV but has no such guard.
+    function deposit(uint256 amount, uint256 expectedSupply) external nonReentrant {
+        if (amount == 0) revert InvalidAmount();
+        uint256 supply = totalSupply(TOKEN_ID);
+        if (supply != expectedSupply) revert SupplyChanged(supply, expectedSupply);
+        _pullHunt(msg.sender, amount);
+        emit Deposited(msg.sender, amount, supply);
     }
 
     function setURI(string calldata newURI) external onlyOwner {

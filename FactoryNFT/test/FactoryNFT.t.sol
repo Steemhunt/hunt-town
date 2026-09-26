@@ -142,6 +142,48 @@ contract FactoryNFTEconomicsTest is FactoryNFTTestBase {
         assertEq(hunt.balanceOf(ALICE), 0);
     }
 
+    function testDepositRaisesNavForTheExpectedSupply() public {
+        _mintFor(ALICE, 9);
+        hunt.mint(address(this), 10_000e18);
+        hunt.approve(address(factory), 10_000e18);
+        vm.expectEmit(address(factory));
+        emit FactoryNFT.Deposited(address(this), 10_000e18, 10);
+        factory.deposit(10_000e18, 10);
+        assertEq(hunt.balanceOf(address(this)), 0);
+        assertEq(hunt.balanceOf(address(factory)), 20_000e18);
+        assertEq(factory.navPerNFT(), 2_000e18);
+        assertEq(factory.totalSupply(ID), 10);
+    }
+
+    function testDepositRevertsAfterAFrontRunningMintOrBurn() public {
+        hunt.mint(address(this), 10_000e18);
+        hunt.approve(address(factory), 10_000e18);
+        uint256 expected = factory.totalSupply(ID);
+        // Alice mints in front of the pending deposit hoping to redeem a share of it.
+        uint256 paid = _mintFor(ALICE, 3);
+        vm.expectRevert(abi.encodeWithSelector(FactoryNFT.SupplyChanged.selector, 4, expected));
+        factory.deposit(10_000e18, expected);
+        vm.prank(ALICE);
+        assertLt(factory.burn(3, 0), paid);
+
+        // A burn between the read and the deposit is rejected the same way.
+        vm.expectRevert(abi.encodeWithSelector(FactoryNFT.SupplyChanged.selector, 1, 4));
+        factory.deposit(10_000e18, 4);
+        assertEq(hunt.balanceOf(address(this)), 10_000e18);
+        assertEq(hunt.allowance(address(this), address(factory)), 10_000e18);
+    }
+
+    function testDepositRejectsZeroAmountAndUnderfundedTransfer() public {
+        vm.expectRevert(FactoryNFT.InvalidAmount.selector);
+        factory.deposit(0, 1);
+        hunt.mint(address(this), 100e18);
+        hunt.approve(address(factory), 100e18);
+        hunt.setTransferFee(true);
+        vm.expectRevert(FactoryNFT.InexactHuntTransfer.selector);
+        factory.deposit(100e18, 1);
+        assertEq(hunt.balanceOf(address(factory)), SEED);
+    }
+
     function testDirectDonationChangesNavImmediately() public {
         _mintFor(ALICE, 9);
         _donate(123_456_789);

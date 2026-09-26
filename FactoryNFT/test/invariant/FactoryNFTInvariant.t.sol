@@ -54,6 +54,17 @@ contract FactoryNFTInvariantHandler is Test {
         _assertNavDidNotDecrease(oldVault, oldSupply);
     }
 
+    function deposit(uint256 amountSeed) external {
+        uint256 amount = bound(amountSeed, 1, 1_000_000e18);
+        uint256 oldVault = hunt.balanceOf(address(factory));
+        uint256 oldSupply = factory.totalSupply(0);
+        hunt.mint(address(this), amount);
+        hunt.approve(address(factory), amount);
+        factory.deposit(amount, oldSupply);
+        huntDeposited += amount;
+        _assertNavDidNotDecrease(oldVault, oldSupply);
+    }
+
     function donate(uint256 amountSeed) external {
         uint256 amount = bound(amountSeed, 0, 1_000_000e18);
         uint256 oldVault = hunt.balanceOf(address(factory));
@@ -93,11 +104,12 @@ contract FactoryNFTInvariantTest is FactoryNFTTestBase {
     function setUp() public override {
         super.setUp();
         handler = new FactoryNFTInvariantHandler(factory, hunt);
-        bytes4[] memory selectors = new bytes4[](4);
+        bytes4[] memory selectors = new bytes4[](5);
         selectors[0] = FactoryNFTInvariantHandler.mint.selector;
         selectors[1] = FactoryNFTInvariantHandler.redeem.selector;
-        selectors[2] = FactoryNFTInvariantHandler.donate.selector;
-        selectors[3] = FactoryNFTInvariantHandler.transferUnits.selector;
+        selectors[2] = FactoryNFTInvariantHandler.deposit.selector;
+        selectors[3] = FactoryNFTInvariantHandler.donate.selector;
+        selectors[4] = FactoryNFTInvariantHandler.transferUnits.selector;
         targetSelector(FuzzSelector({ addr: address(handler), selectors: selectors }));
         targetContract(address(handler));
     }

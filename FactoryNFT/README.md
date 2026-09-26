@@ -70,9 +70,27 @@ more because subsequent burns share previously retained fees. For example,
 with 3,000 HUNT backing 3 units, redeeming 2 together returns 1,900 HUNT; redeeming
 them separately returns 950 + 973.75 HUNT.
 
-Product revenue is converted to HUNT externally and transferred directly to
-FactoryNFT. Incoming HUNT immediately raises NAV; there is no reward checkpoint,
-claim function, or holding-period restriction.
+Product revenue is converted to HUNT externally and added through
+`deposit(amount, expectedSupply)`. The call reverts with `SupplyChanged` when
+any unit was minted or burned after `expectedSupply` was read, so a mint placed
+in front of a pending deposit makes the deposit fail instead of capturing part
+of it. A plain HUNT transfer to the contract also raises NAV but carries no such
+guard, so team deposits always go through `deposit`. Incoming HUNT immediately
+raises NAV; there is no reward checkpoint, claim function, or holding-period
+restriction.
+
+Operating rules for deposits:
+
+- Submit deposits through a private relay so the transaction is not visible in
+  the public mempool. A public deposit can be blocked repeatedly by a one-unit
+  mint that costs the attacker only gas.
+- When a deposit reverts with `SupplyChanged`, look at what changed the supply
+  before retrying with the new value. Retrying blindly after a front-running
+  mint hands that minter a share of the deposit.
+- The guard does not cover a holder who minted well before a predictable
+  deposit. Keep deposit timing irregular and each deposit small relative to the
+  backing; with the 5% redemption fee, capturing a deposit only pays when it
+  exceeds roughly 5% of the backing after the attacker's own mint.
 
 ## Core API and permissions
 
@@ -81,12 +99,14 @@ quoteMint(uint256 amount) returns (uint256 huntIn)
 quoteBurn(uint256 amount) returns (uint256 huntOut)
 mint(uint256 amount, uint256 maxHuntIn, address receiver) returns (uint256 huntIn)
 burn(uint256 amount, uint256 minHuntOut) returns (uint256 huntOut)
+deposit(uint256 amount, uint256 expectedSupply)
 ```
 
 Mint pulls HUNT from the caller and issues units directly to `receiver`.
 Burn redeems only the caller's units and pays that caller. ERC1155 operator
-approval does not authorize redemption on a holder's behalf. Mint, burn and
-both transfer entrypoints reject reentrancy. Contract recipients must accept
+approval does not authorize redemption on a holder's behalf. Deposit pulls HUNT
+from any caller and is permissionless. Mint, burn, deposit and both transfer
+entrypoints reject reentrancy. Contract recipients must accept
 ERC1155 safe-mint/transfer callbacks.
 
 The owner can change the metadata URI, `royaltyOperator`, and transfer validator,
@@ -190,7 +210,7 @@ private key. Ownership and seed recipient are explicit inputs.
 Unit and fuzz tests cover backing arithmetic, rounding, revenue deposits,
 bulk/sequential redemption, reserve conservation, owner permissions, royalties,
 validator hooks, callbacks and transaction rollback. Stateful invariants cover
-mint, redeem, donate and transfer sequences. Zap tests deploy the actual V4
+mint, redeem, deposit, donate and transfer sequences. Zap tests deploy the actual V4
 PoolManager code locally and include the real FactoryNFT implementation.
 
 Real-mainnet fork tests run when `MAINNET_RPC_URL` points to an Ethereum archive
@@ -250,11 +270,11 @@ compiler paths work without removing any checks.
 
 | Source | Lines | Statements | Branches | Functions |
 | --- | --- | --- | --- | --- |
-| FactoryNFT | 100% (77/77) | 100% (90/90) | 100% (12/12) | 100% (19/19) |
+| FactoryNFT | 100% (83/83) | 100% (98/98) | 100% (14/14) | 100% (20/20) |
 | FactoryZapRouter | 100% (107/107) | 100% (181/181) | 100% (38/38) | 100% (4/4) |
 | DeployFactory | 100% (15/15) | 100% (19/19) | 100% (10/10) | 100% (1/1) |
 
-Verified on September 23, 2026 with the toolchain above: 83 tests passed, zero
+Verified on September 27, 2026 with the toolchain above: 86 tests passed, zero
 failures and zero skips with the mainnet fork enabled at block 26,039,501. This
 includes three fuzz cases with 1,000 runs each and three stateful invariants
 checked over 32,768 actions with zero reverts. The deployment test verifies the
