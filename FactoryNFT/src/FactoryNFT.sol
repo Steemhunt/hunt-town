@@ -138,26 +138,6 @@ contract FactoryNFT is ERC1155Supply, ERC2981, Ownable2Step, ReentrancyGuardTran
         return super.supportsInterface(interfaceId);
     }
 
-    function safeTransferFrom(
-        address from,
-        address to,
-        uint256 id,
-        uint256 value,
-        bytes memory data
-    ) public override nonReentrant {
-        super.safeTransferFrom(from, to, id, value, data);
-    }
-
-    function safeBatchTransferFrom(
-        address from,
-        address to,
-        uint256[] memory ids,
-        uint256[] memory values,
-        bytes memory data
-    ) public override nonReentrant {
-        super.safeBatchTransferFrom(from, to, ids, values, data);
-    }
-
     function _grossRedemption(uint256 amount) private view returns (uint256) {
         if (amount == 0) revert InvalidAmount();
         uint256 supply = totalSupply(TOKEN_ID);

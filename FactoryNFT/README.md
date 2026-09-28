@@ -110,9 +110,13 @@ deposit(uint256 amount, uint256 expectedSupply)
 Mint pulls HUNT from the caller and issues units directly to `receiver`.
 Burn redeems only the caller's units and pays that caller. ERC1155 operator
 approval does not authorize redemption on a holder's behalf. Deposit pulls HUNT
-from any caller and is permissionless. Mint, burn, deposit and both transfer
-entrypoints reject reentrancy. Contract recipients must accept
-ERC1155 safe-mint/transfer callbacks.
+from any caller and is permissionless. Mint, burn and deposit reject reentrancy.
+Transfers use OpenZeppelin's standard implementation, which updates all balances
+before calling the receiver. Transfer callbacks can forward received units or
+call mint, burn and deposit against the settled state. During a mint callback,
+forwarding is allowed but the outer mint's guard still blocks mint, burn and
+deposit reentry. Contract recipients must accept ERC1155 safe-mint/transfer
+callbacks.
 
 The owner can change the metadata URI and `royaltyOperator`, and transfer
 ownership through OpenZeppelin's two-step process. The royalty
@@ -261,11 +265,11 @@ compiler paths work without removing any checks.
 
 | Source | Lines | Statements | Branches | Functions |
 | --- | --- | --- | --- | --- |
-| FactoryNFT | 100% (64/64) | 100% (74/74) | 100% (11/11) | 100% (15/15) |
+| FactoryNFT | 100% (60/60) | 100% (72/72) | 100% (11/11) | 100% (13/13) |
 | FactoryZapRouter | 100% (107/107) | 100% (181/181) | 100% (38/38) | 100% (4/4) |
 | DeployFactory | 100% (15/15) | 100% (19/19) | 100% (10/10) | 100% (1/1) |
 
-Verified on September 27, 2026 with the toolchain above: 79 tests passed, zero
+Verified on September 28, 2026 with the toolchain above: 84 tests passed, zero
 failures and zero skips with the mainnet fork enabled at block 26,039,501. This
 includes three fuzz cases with 1,000 runs each and three stateful invariants
 checked over 32,768 actions with zero reverts. The deployment test verifies the

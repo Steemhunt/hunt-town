@@ -428,33 +428,4 @@ contract FactoryNFTIntegrationTest is FactoryNFTTestBase {
         assertEq(factory.totalSupply(ID), 2);
         assertEq(hunt.balanceOf(address(factory)), 2 * SEED);
     }
-
-    function testSingleAndBatchTransferCallbacksCannotReenterSupplyChanges() public {
-        _mintFor(ALICE, 2);
-        FactoryTestReceiver receiver = new FactoryTestReceiver();
-        receiver.configure(factory, hunt, false, true);
-        hunt.mint(address(receiver), 2 * SEED);
-        bytes memory expected = abi.encodeWithSignature("ReentrancyGuardReentrantCall()");
-
-        vm.prank(ALICE);
-        factory.safeTransferFrom(ALICE, address(receiver), ID, 1, "");
-        assertFalse(receiver.mintReentrySucceeded());
-        assertFalse(receiver.burnReentrySucceeded());
-        assertEq(receiver.mintReentryResult(), expected);
-        assertEq(receiver.burnReentryResult(), expected);
-
-        uint256[] memory ids = new uint256[](1);
-        uint256[] memory amounts = new uint256[](1);
-        ids[0] = ID;
-        amounts[0] = 1;
-        vm.prank(ALICE);
-        factory.safeBatchTransferFrom(ALICE, address(receiver), ids, amounts, "");
-        assertFalse(receiver.mintReentrySucceeded());
-        assertFalse(receiver.burnReentrySucceeded());
-        assertEq(receiver.mintReentryResult(), expected);
-        assertEq(receiver.burnReentryResult(), expected);
-        assertEq(factory.balanceOf(address(receiver), ID), 2);
-        assertEq(factory.totalSupply(ID), 3);
-        assertEq(hunt.balanceOf(address(factory)), 3 * SEED);
-    }
 }
