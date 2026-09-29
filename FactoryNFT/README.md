@@ -3,7 +3,8 @@
 HUNT-backed ERC1155 units for the Hunt Town Web3 product factory. `FactoryNFT` holds
 the collateral itself; `FactoryZapRouter` buys the HUNT needed to mint through
 Uniswap V4. `BuildingMigrator` exchanges legacy Buildings and fulfills operator-verified
-Base migrations using prefunded HUNT. All three contracts are non-upgradeable.
+Base migrations using prefunded HUNT. `MiniBuildingCollector` collects Mini Buildings
+and HUNT on Base against server-signed quotes. All four contracts are non-upgradeable.
 
 ## Toolchain
 
@@ -243,6 +244,88 @@ HUNT transfers. The canonical HUNT token is assumed to transfer exact amounts.
 Asset-moving entrypoints reject reentry, and Factory allowances are exact and
 cleared after minting. Contract recipients must accept ERC1155 safe mint callbacks.
 
+## Mini Building collection on Base
+
+`src/MiniBuildingCollector.sol` accepts a server-signed quote and atomically transfers
+Mini Buildings and any additional HUNT from the caller to the same fixed custody
+wallet used by `BuildingMigrator`:
+`0x25bE2785504c36016aDEC2585F9e120eF6B2f64D`.
+It does not bridge tokens, read Ethereum NAV, or mint Factory NFTs on Base.
+
+```solidity
+struct MigrationQuote {
+    bytes32 quoteId;
+    address account;
+    uint256 miniAmount;
+    uint256 mintingCount;
+    uint256 additionalHunt;
+    uint256 deadline;
+}
+
+hashQuote(MigrationQuote quote) returns (bytes32 digest)
+deposit(MigrationQuote quote, bytes signature)
+setQuoteSigner(address newQuoteSigner)
+```
+
+The EIP-712 domain is `name: "MiniBuildingCollector"`, `version: "1"`, the current
+chain ID, and the collector address as `verifyingContract`. The primary type is
+`MigrationQuote`, with the fields in exactly the order shown above. Amounts are
+integers: Mini Building and Factory NFT quantities are whole units; HUNT uses
+18-decimal base units. `hashQuote` returns the complete digest for checking an
+off-chain implementation. Sign the typed data once; do not add an `eth_sign` or
+personal-message prefix to that digest.
+
+The configured EOA `quoteSigner` authorizes every field. Only `quote.account` can
+submit the quote, and that address is also the intended Ethereum recipient. The
+quote is valid through its `deadline` timestamp, inclusive, and each `quoteId` can
+succeed only once through `consumedQuotes`. The quote signer can be rotated by the
+two-step owner; quotes from the old signer then fail. Use a dedicated signing key
+for the quote service and keep the Ethereum operator key in the worker. A quote
+signer only signs messages and does not need ETH for gas.
+
+Before calling `deposit`, the user approves the collector for Mini Building
+ERC1155 transfers and, when needed, for the exact additional HUNT payment. Mini
+Buildings use token ID `0`. Deposit transfers both assets directly to custody and
+requires the custody HUNT balance to increase by the quoted amount. Invalid or
+expired signatures, reused quotes, missing balances or approvals, and rejected
+transfers revert the entire operation, including the consumed quote flag. The
+assets move in one atomic deposit transaction; first-time approvals can require
+separate transactions. The collector never holds the normal deposit proceeds.
+
+Successful collection emits:
+
+```solidity
+event Deposited(
+    bytes32 indexed quoteId,
+    address indexed account,
+    uint256 miniAmount,
+    uint256 mintingCount,
+    uint256 additionalHunt
+);
+```
+
+The separate web/worker integration must:
+
+1. Calculate and persist the quote from a consistent Ethereum block. Mini Building
+   credit is `miniAmount * 100 HUNT`; derive the Factory quantity and exact batch
+   cost from FactoryNFT, then sign the required top-up and quantity. A 15-minute
+   lifetime is a server policy, not a hard-coded contract limit.
+2. Submit the signed quote on Base, then verify its event and the actual Mini
+   Building and HUNT transfers against the saved quote. Bind the quote to the
+   accepted receipt and reject reused receipts.
+3. Wait for 3 Base confirmations, counting the inclusion block as the first. This
+   is a block-depth policy, not Base's Ethereum-backed `finalized` status.
+4. Fulfill the saved `mintingCount` to `account` through the existing Ethereum
+   `BuildingMigrator`, using one stable request ID per accepted deposit. The team
+   covers any NAV increase after the accepted quote from prefunded HUNT. A quote
+   that was valid when deposited remains eligible for fulfillment after expiry.
+
+The collector trusts the quote signer for pricing; it cannot independently verify
+Ethereum NAV or ensure that the team fulfills a deposit. The existing unsigned
+frontend deposit ABI and receipt verifier must be updated for this signed quote
+and event before enabling Mini migrations. This contract change does not deploy
+the collector, configure the quote service, or start the worker.
+
 ## Deployment
 
 `script/DeployFactory.s.sol` targets Ethereum and uses:
@@ -284,6 +367,35 @@ For an interactive deployment, add `--interactive --broadcast --slow` yourself.
 The script neither reads a private key nor funds the contract. After deployment,
 transfer enough HUNT to the migrator to cover the full current mint cost of pending
 migrations, then configure its address in the frontend and operator worker.
+
+### MiniBuildingCollector
+
+`script/DeployMiniBuildingCollector.s.sol` only accepts Base chain ID `8453` and
+uses the existing Base token contracts:
+
+- Mini Building: `0x475f8E3eE5457f7B4AAca7E989D35418657AdF2a`
+- HUNT: `0x37f0c2915CeCC7e977183B8543Fc0864d03E064C`
+
+Set the owner to the existing FactoryNFT owner and replace the quote signer
+placeholder with the dedicated server signer's public address. The deployment
+script only reads public addresses; it neither reads a private key nor funds the
+collector. The deployer needs Base ETH for gas; the collector needs no prefunding.
+
+```sh
+export DEPLOYER=0xE845e384f5eac62705fF73a07252B802a6987123
+export COLLECTOR_OWNER="$DEPLOYER"
+export COLLECTOR_QUOTE_SIGNER="<QUOTE_SIGNER_ADDRESS>"
+
+./.tools/forge script script/DeployMiniBuildingCollector.s.sol:DeployMiniBuildingCollector \
+  --rpc-url https://mainnet.base.org \
+  --sender "$DEPLOYER"
+```
+
+Review the simulation, then run the same command with `--interactive --broadcast
+--slow` to enter the deployer's private key interactively. Do not paste a private
+key into an environment variable or shell command. Register the deployed address
+in the quote service and frontend only after the signed-quote integration is ready.
+The Ethereum BuildingMigrator and its operator remain unchanged.
 
 ## Verification
 
@@ -346,33 +458,51 @@ MAINNET_RPC_URL=https://eth.drpc.org ./.tools/forge test \
   --match-contract 'BuildingMigrator.*Test|DeployBuildingMigratorTest' -vv
 ```
 
-Run the coverage gate with the archive RPC configured:
+Collector unit and fuzz tests independently check EIP-712 hashing, every signed
+field, cross-chain and cross-contract replay, deadline boundaries, signer rotation,
+ownership, exact payments, and rollback/retry. `MiniBuildingCollectorForkTest`
+uses the deployed Base Mini Building and HUNT contracts at block **51,941,900**.
+It checks atomic custody transfers, zero top-up, duplicate quotes, and retry after
+an unpaid HUNT transfer. Only local test balances are funded with cheatcodes.
 
 ```sh
-./script/check-coverage.sh
+BASE_RPC_URL=https://mainnet.base.org ./.tools/forge test \
+  --match-contract MiniBuildingCollectorForkTest -vv
 ```
 
-The gate requires the RPC URL, runs the complete suite, writes
+Run the coverage gate with both archive RPC endpoints configured:
+
+```sh
+MAINNET_RPC_URL=https://eth.drpc.org BASE_RPC_URL=https://mainnet.base.org \
+  ./script/check-coverage.sh
+```
+
+The gate requires both RPC URLs, runs the complete suite, writes
 `coverage/summary.txt` and `coverage/lcov.info`, and fails unless every reported
 project source and deployment script reaches 100% in all four metrics. It also
-requires entries for all three production contracts and both deployment scripts.
+requires entries for each production contract and deployment script.
 Only third-party libraries and test fixtures are excluded; the interfaces have
 no executable bodies. Coverage uses Foundry's standard unoptimized compilation,
 without `--ir-minimum`, while normal tests use the production IR configuration.
 The router groups balance snapshots and scopes temporary variables so both
 compiler paths work without removing any checks.
 
+Coverage with the Ethereum and Base fork suites enabled:
+
 | Source | Lines | Statements | Branches | Functions |
 | --- | --- | --- | --- | --- |
 | FactoryNFT | 100% (60/60) | 100% (72/72) | 100% (11/11) | 100% (13/13) |
 | FactoryZapRouter | 100% (107/107) | 100% (181/181) | 100% (38/38) | 100% (4/4) |
 | BuildingMigrator | 100% (54/54) | 100% (65/65) | 100% (13/13) | 100% (7/7) |
+| MiniBuildingCollector | 100% (31/31) | 100% (43/43) | 100% (9/9) | 100% (5/5) |
 | DeployFactory | 100% (15/15) | 100% (19/19) | 100% (10/10) | 100% (1/1) |
 | DeployBuildingMigrator | 100% (9/9) | 100% (11/11) | 100% (4/4) | 100% (1/1) |
+| DeployMiniBuildingCollector | 100% (10/10) | 100% (12/12) | 100% (6/6) | 100% (1/1) |
 
-Verified on September 29, 2026 with the toolchain above: 113 tests passed, zero
-failures and zero skips with the mainnet forks enabled at blocks 26,039,501 and
-26,073,640. This includes four fuzz cases with 1,000 runs each and three stateful invariants
+Verified on September 29, 2026 with the toolchain above: 138 tests passed, zero
+failures and zero skips with Ethereum forks at blocks 26,039,501 and 26,073,640
+and the Base fork at block 51,941,900. This includes five fuzz cases with 1,000
+runs each and three stateful invariants
 checked over 32,768 actions with zero reverts. The deployment test verifies the
 approval/CREATE nonce sequence, seed funding and configuration/nonce failure
 guards. Formatting checks passed. Production bytecode is below the EVM size
