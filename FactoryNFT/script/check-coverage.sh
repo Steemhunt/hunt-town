@@ -27,8 +27,10 @@ mkdir -p coverage
 awk -F '|' '
     BEGIN {
         required["src/FactoryNFT.sol"] = 1
+        required["src/BuildingMigrator.sol"] = 1
         required["src/periphery/FactoryZapRouter.sol"] = 1
         required["script/DeployFactory.s.sol"] = 1
+        required["script/DeployBuildingMigrator.s.sol"] = 1
     }
     /^\|[[:space:]]*(src\/|script\/)/ {
         path = $2

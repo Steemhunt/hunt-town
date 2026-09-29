@@ -2,7 +2,8 @@
 
 HUNT-backed ERC1155 units for the Hunt Town Web3 product factory. `FactoryNFT` holds
 the collateral itself; `FactoryZapRouter` buys the HUNT needed to mint through
-Uniswap V4. Both contracts are non-upgradeable.
+Uniswap V4. `BuildingMigrator` exchanges legacy Buildings and fulfills operator-verified
+Base migrations using prefunded HUNT. All three contracts are non-upgradeable.
 
 ## Toolchain
 
@@ -178,6 +179,70 @@ The zap preserves preexisting HUNT, input-token and ETH balances and never
 refunds another caller's dust. It has no owner or arbitrary-call function.
 Prices and routes are chosen off-chain; `maxAmountIn` bounds the user's payment.
 
+## Building migration
+
+`src/BuildingMigrator.sol` connects the existing Ethereum Building ERC721 and
+FactoryNFT contracts. It does not burn Buildings or withdraw their TownHall backing.
+Every Building is eligible, including newly minted units and units still in their
+one-year lock. Transferred Buildings retain their original unlock times; the team
+provides the liquidity until it can redeem that backing through TownHall.
+
+```solidity
+quoteMigration(uint256 buildingCount)
+    returns (uint256 mintingCount, uint256 additionalHunt, uint256 huntIn)
+migrate(uint256[] ids, uint256 maxAdditionalHunt)
+    returns (uint256 mintingCount, uint256 additionalHunt)
+migrateByOperator(uint256 mintingCount, address receiver, bytes32 requestId, uint256 maxHuntIn)
+    returns (uint256 huntIn)
+```
+
+For Main Buildings, credit is `ids.length * 1,000 HUNT`, and the Factory quantity is
+`ceil(credit / FactoryNFT.quoteMint(1))`. The actual cost is `FactoryNFT.quoteMint(quantity)`;
+the user pays `max(actualCost - credit, 0)`. For example, 10 Buildings at a
+1,200 HUNT mint price produce 9 Factory NFTs and require 800 additional HUNT.
+Batch minting rounds once, so the actual top-up may be a few wei below a frontend
+estimate obtained by multiplying the one-unit quote. If batch rounding places the
+cost just below credit, the top-up is zero; there is no separate dust refund.
+Use `quoteMigration` for the authoritative transaction quote.
+
+The holder approves their Buildings and only the required additional HUNT to the
+migrator, then calls `migrate`. The fixed custody wallet
+`MIGRATION_RECEIVER = 0x25bE2785504c36016aDEC2585F9e120eF6B2f64D` receives both the
+Buildings and the top-up directly. The migrator spends the **entire** Factory mint
+cost from its prefunded HUNT balance and mints directly to the caller. The user
+cannot nominate another Building owner, even with that owner's approval. Each
+Building ID is accepted only once, including if custody later transfers it back.
+
+Quantity and top-up are recalculated at execution. `maxAdditionalHunt` caps the
+additional payment, not the Factory quantity; NAV changes across a rounding
+boundary can change the number of NFTs received. Missing approval, insufficient
+user or treasury HUNT, a rejected safe transfer/mint, or a changed mint quote
+reverts the entire transaction, including all custody transfers and ID flags.
+
+For Mini Buildings, the Base transfer, quote, and pending record live outside this
+contract. A separate worker verifies the Base receipt and calls `migrateByOperator`
+from the configured operator wallet. There is no extra signature payload: the
+Ethereum transaction authenticates the operator. The quoted Factory quantity and
+recipient come from the pending record, and `maxHuntIn` bounds the team's current
+mint expenditure. No HUNT or NFT is pulled from the Ethereum recipient.
+
+The worker must derive one stable `requestId` per accepted Base receipt, for example
+`keccak256(abi.encode(uint256(8453), baseTransactionHash, uint256(baseLogIndex)))`,
+and reuse it for every retry. A successful request is recorded in `processedRequests`
+and cannot mint twice, even with a changed recipient or quantity. Failed requests
+remain retryable. After a worker restart or an uncertain RPC response, check the
+mapping and `OperatorMigrated` receipt before resubmitting. The contract trusts the
+operator to verify the Base payment and quoted quantity; it is not a cross-chain
+proof verifier. Base collection, DB processing, confirmation policy, and status UI
+are a separate integration step; this contract does not guarantee a delivery time.
+
+The two-step owner can rotate `operator` with `setOperator`; zero disables operator
+fulfillment while leaving Main Building migration available. `withdrawHunt(amount)`
+returns unused team funding only to `MIGRATION_RECEIVER`. Funding uses ordinary
+HUNT transfers. The canonical HUNT token is assumed to transfer exact amounts.
+Asset-moving entrypoints reject reentry, and Factory allowances are exact and
+cleared after minting. Contract recipients must accept ERC1155 safe mint callbacks.
+
 ## Deployment
 
 `script/DeployFactory.s.sol` targets Ethereum and uses:
@@ -199,6 +264,26 @@ CREATE. The script accounts for the approval transaction's nonce. Use the same
 deployer without interleaved transactions. To broadcast after review, use your
 Foundry signing account and add `--broadcast --slow`; the script never loads a
 private key. Ownership and seed recipient are explicit inputs.
+
+### BuildingMigrator
+
+`script/DeployBuildingMigrator.s.sol` deploys only the new migrator, pointing at:
+
+- FactoryNFT: `0x961eA6C51c185958b1A11ad8335046988D1B5734`
+- Building: `0x0c9Bb1ffF512a5B4F01aCA6ad964Ec6D7fC60c96`
+
+Set `DEPLOYER`, `MIGRATOR_OWNER`, `MIGRATOR_OPERATOR`, and `MAINNET_RPC_URL`.
+Use a zero operator to enable only Main Building migration initially. Simulate:
+
+```sh
+./.tools/forge script script/DeployBuildingMigrator.s.sol:DeployBuildingMigrator \
+  --rpc-url "$MAINNET_RPC_URL" --sender "$DEPLOYER"
+```
+
+For an interactive deployment, add `--interactive --broadcast --slow` yourself.
+The script neither reads a private key nor funds the contract. After deployment,
+transfer enough HUNT to the migrator to cover the full current mint cost of pending
+migrations, then configure its address in the frontend and operator worker.
 
 ## Verification
 
@@ -247,6 +332,20 @@ Additional unit tests inject invalid manager responses, token transfers, mint
 payments and deployment configuration to exercise defensive failure paths.
 Those fault-injection mocks are separate from the real mainnet integration tests.
 
+Migrator unit and fuzz tests cover NAV-based quantities, exact batch rounding,
+custody and treasury accounting, approvals, duplicate Buildings and Base receipts,
+operator rotation, failed-call retries, callback rejection/reentry, and deployment
+guards. `BuildingMigratorForkTest` uses the already-deployed FactoryNFT, Building,
+TownHall, and HUNT at block **26,073,640**. It includes existing unlocked Buildings
+and freshly minted locked Buildings, the 10-to-9 conversion at 1,200 HUNT NAV,
+atomic failure cases, and operator fulfillment. `MIGRATION_FORK_BLOCK` is separate
+from the older general fork block because FactoryNFT did not exist at that block.
+
+```sh
+MAINNET_RPC_URL=https://eth.drpc.org ./.tools/forge test \
+  --match-contract 'BuildingMigrator.*Test|DeployBuildingMigratorTest' -vv
+```
+
 Run the coverage gate with the archive RPC configured:
 
 ```sh
@@ -256,7 +355,7 @@ Run the coverage gate with the archive RPC configured:
 The gate requires the RPC URL, runs the complete suite, writes
 `coverage/summary.txt` and `coverage/lcov.info`, and fails unless every reported
 project source and deployment script reaches 100% in all four metrics. It also
-requires entries for both production contracts and the deployment script.
+requires entries for all three production contracts and both deployment scripts.
 Only third-party libraries and test fixtures are excluded; the interfaces have
 no executable bodies. Coverage uses Foundry's standard unoptimized compilation,
 without `--ir-minimum`, while normal tests use the production IR configuration.
@@ -267,11 +366,13 @@ compiler paths work without removing any checks.
 | --- | --- | --- | --- | --- |
 | FactoryNFT | 100% (60/60) | 100% (72/72) | 100% (11/11) | 100% (13/13) |
 | FactoryZapRouter | 100% (107/107) | 100% (181/181) | 100% (38/38) | 100% (4/4) |
+| BuildingMigrator | 100% (54/54) | 100% (65/65) | 100% (13/13) | 100% (7/7) |
 | DeployFactory | 100% (15/15) | 100% (19/19) | 100% (10/10) | 100% (1/1) |
+| DeployBuildingMigrator | 100% (9/9) | 100% (11/11) | 100% (4/4) | 100% (1/1) |
 
-Verified on September 28, 2026 with the toolchain above: 84 tests passed, zero
-failures and zero skips with the mainnet fork enabled at block 26,039,501. This
-includes three fuzz cases with 1,000 runs each and three stateful invariants
+Verified on September 29, 2026 with the toolchain above: 113 tests passed, zero
+failures and zero skips with the mainnet forks enabled at blocks 26,039,501 and
+26,073,640. This includes four fuzz cases with 1,000 runs each and three stateful invariants
 checked over 32,768 actions with zero reverts. The deployment test verifies the
 approval/CREATE nonce sequence, seed funding and configuration/nonce failure
 guards. Formatting checks passed. Production bytecode is below the EVM size
