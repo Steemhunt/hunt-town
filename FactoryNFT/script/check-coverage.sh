@@ -3,6 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 : "${MAINNET_RPC_URL:?Set MAINNET_RPC_URL to an Ethereum archive RPC endpoint}"
+: "${BASE_RPC_URL:?Set BASE_RPC_URL to a Base archive RPC endpoint}"
 export MAINNET_FORK_BLOCK="${MAINNET_FORK_BLOCK:-26039501}"
 
 if [[ -n "${FORGE_BIN:-}" ]]; then
@@ -28,9 +29,11 @@ awk -F '|' '
     BEGIN {
         required["src/FactoryNFT.sol"] = 1
         required["src/BuildingMigrator.sol"] = 1
+        required["src/MiniBuildingCollector.sol"] = 1
         required["src/periphery/FactoryZapRouter.sol"] = 1
         required["script/DeployFactory.s.sol"] = 1
         required["script/DeployBuildingMigrator.s.sol"] = 1
+        required["script/DeployMiniBuildingCollector.s.sol"] = 1
     }
     /^\|[[:space:]]*(src\/|script\/)/ {
         path = $2
