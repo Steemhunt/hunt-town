@@ -4,7 +4,8 @@ HUNT-backed ERC1155 units for the Hunt Town Web3 product factory. `FactoryNFT` h
 the collateral itself; `FactoryZapRouter` buys the HUNT needed to mint through
 Uniswap V4. `BuildingMigrator` exchanges legacy Buildings and fulfills operator-verified
 Base migrations using prefunded HUNT. `MiniBuildingCollector` collects Mini Buildings
-and HUNT on Base against server-signed quotes. All four contracts are non-upgradeable.
+and HUNT on Base against server-signed quotes. `FactoryDonation` forwards public
+donations to the Factory vault with a message. All five contracts are non-upgradeable.
 
 ## Toolchain
 
@@ -141,6 +142,46 @@ redeem at 95% of NAV, so secondary prices stay inside that band and enforcement
 machinery would have guarded only part of a 5% spread.
 
 References: [OpenZeppelin ERC2981](https://docs.openzeppelin.com/contracts/5.x/api/token/common).
+
+## Public donations
+
+`src/FactoryDonation.sol` wraps the existing `FactoryNFT.deposit` without changing
+FactoryNFT. Anyone can donate, including a wallet that owns no Factory NFTs:
+
+```solidity
+donate(uint256 amount, uint256 expectedSupply, string calldata message)
+event Donated(address indexed donor, uint256 amount, string message)
+```
+
+Approve HUNT to the **FactoryDonation address**, then call `donate`. `amount` is
+HUNT in 18-decimal base units and must be positive. Read `FactoryNFT.totalSupply(0)`
+just before submitting and pass it as `expectedSupply`; the existing Factory supply
+guard and its limitations apply unchanged. Empty messages are accepted. Messages
+are capped at 280 bytes, so the frontend must count UTF-8 bytes rather than
+characters. The contract emits the supplied bytes unchanged and does not validate
+text encoding or formatting. The site should render messages as plain text, and
+the indexer must handle non-text or control bytes without stopping synchronization.
+
+The wrapper pulls exactly `amount` from the caller, deposits that same amount into
+the fixed Factory, then emits `Donated`. Both transfers and the message succeed or
+revert together. Donations mint no NFTs, leave the supply unchanged, and increase
+the HUNT backing of every existing NFT. Preexisting wrapper HUNT dust is preserved
+and cannot subsidize an inexact transfer. Messages live only in transaction logs;
+there is no stored donation list, owner, upgrade, withdrawal, or arbitrary-call API.
+The wrapper grants its fixed Factory a maximum HUNT allowance during construction,
+so subsequent donations do not repeat this approval. This does not approve or
+spend any deployer's HUNT. Users still approve their own HUNT to the wrapper.
+
+For indexing, `FactoryNFT.Deposited.depositor` is the wrapper address and
+`FactoryDonation.Donated.donor` is the original caller. Match both events in the
+same successful transaction, including their contract addresses, amounts, block
+identity, and log positions. Count the Factory deposit once in NAV accounting;
+`Donated` adds donor/message metadata, not a second vault balance change. Only
+verified wrapper donation events belong on the Donors page: ordinary product
+revenue deposits and direct HUNT transfers must not be classified automatically.
+Rebuild donation metadata from logs alongside Factory history on replay or reorg.
+Use the existing block-price snapshot for an estimated USD value, leaving it
+unavailable when no historical quote exists.
 
 ## V4 minting zap
 
@@ -348,6 +389,54 @@ deployer without interleaved transactions. To broadcast after review, use your
 Foundry signing account and add `--broadcast --slow`; the script never loads a
 private key. Ownership and seed recipient are explicit inputs.
 
+### FactoryDonation
+
+Ethereum mainnet deployment on October 8, 2026:
+
+| Field | Value |
+| --- | --- |
+| FactoryDonation | `0xA4F8Aef123bb4c22E415d2D9E19b3741f20D76E4` |
+| Deployment block | `26146966` |
+| Deployment transaction | [0xc8afd9a7188e668090e5e129a6a60e01ab2446e5853763a99b276e9ffe3959ba](https://etherscan.io/tx/0xc8afd9a7188e668090e5e129a6a60e01ab2446e5853763a99b276e9ffe3959ba) |
+| Deployer | `0xE845e384f5eac62705fF73a07252B802a6987123` |
+| Gas used | `462351` |
+
+The deployed runtime and creation transaction match the local build. Onchain
+checks confirm the fixed Factory and HUNT addresses, a 280-byte message limit,
+and the wrapper's maximum HUNT allowance to Factory. Start indexing `Donated`
+events at the deployment block.
+
+`script/DeployFactoryDonation.s.sol` deploys only the donation wrapper on Ethereum
+mainnet, using the existing FactoryNFT at
+`0x961eA6C51c185958b1A11ad8335046988D1B5734`. HUNT is derived from that Factory
+(`0x9AAb071B4129B083B01cB5A0Cb513Ce7ecA26fa5`). The deployer needs ETH for gas,
+but no HUNT, seed approval, prefunding, or owner configuration.
+
+Set `DEPLOYER` to your deployment wallet's public address. Simulate first:
+
+```sh
+export DEPLOYER="<YOUR_DEPLOYER_ADDRESS>"
+export MAINNET_RPC_URL="https://eth.drpc.org"
+
+./.tools/forge script script/DeployFactoryDonation.s.sol:DeployFactoryDonation \
+  --rpc-url "$MAINNET_RPC_URL" --sender "$DEPLOYER"
+```
+
+After reviewing the simulation, deploy with your Foundry signing account, or
+enter the key locally using an interactive prompt:
+
+```sh
+./.tools/forge script script/DeployFactoryDonation.s.sol:DeployFactoryDonation \
+  --rpc-url "$MAINNET_RPC_URL" --sender "$DEPLOYER" \
+  --interactive --broadcast --slow
+```
+
+The script reads only the public deployer address and performs one CREATE. The
+wrapper-to-Factory allowance is set inside construction and consumes no additional
+EOA nonce. Do not put a private key in a shell command or environment variable.
+After deployment, record the wrapper address and deployment block for the frontend
+and donation indexer. No change to the existing FactoryNFT deployment is needed.
+
 ### BuildingMigrator
 
 `script/DeployBuildingMigrator.s.sol` deploys only the new migrator, pointing at:
@@ -458,6 +547,19 @@ MAINNET_RPC_URL=https://eth.drpc.org ./.tools/forge test \
   --match-contract 'BuildingMigrator.*Test|DeployBuildingMigratorTest' -vv
 ```
 
+Donation unit and fuzz tests cover caller attribution, optional messages, the
+280-byte boundary with UTF-8 text, exact transfers, preserved dust, missing user
+approval or balance, supply-change rollback, reentrancy, and deployment wiring.
+`FactoryDonationForkTest` uses the actual Ethereum HUNT and deployed FactoryNFT
+at block **26,146,887**, overridable with `DONATION_FORK_BLOCK`. It funds only the
+test caller locally and never broadcasts. The donation fork block is independent
+of `MAINNET_FORK_BLOCK` because the earlier general fork predates FactoryNFT.
+
+```sh
+MAINNET_RPC_URL=https://eth.drpc.org ./.tools/forge test \
+  --match-contract 'FactoryDonation.*Test|DeployFactoryDonationTest' -vv
+```
+
 Collector unit and fuzz tests independently check EIP-712 hashing, every signed
 field, cross-chain and cross-contract replay, deadline boundaries, signer rotation,
 ownership, exact payments, and rollback/retry. `MiniBuildingCollectorForkTest`
@@ -492,17 +594,19 @@ Coverage with the Ethereum and Base fork suites enabled:
 | Source | Lines | Statements | Branches | Functions |
 | --- | --- | --- | --- | --- |
 | FactoryNFT | 100% (60/60) | 100% (72/72) | 100% (11/11) | 100% (13/13) |
+| FactoryDonation | 100% (17/17) | 100% (23/23) | 100% (5/5) | 100% (2/2) |
 | FactoryZapRouter | 100% (107/107) | 100% (181/181) | 100% (38/38) | 100% (4/4) |
 | BuildingMigrator | 100% (54/54) | 100% (65/65) | 100% (13/13) | 100% (7/7) |
 | MiniBuildingCollector | 100% (31/31) | 100% (43/43) | 100% (9/9) | 100% (5/5) |
 | DeployFactory | 100% (15/15) | 100% (19/19) | 100% (10/10) | 100% (1/1) |
+| DeployFactoryDonation | 100% (6/6) | 100% (6/6) | 100% (2/2) | 100% (1/1) |
 | DeployBuildingMigrator | 100% (9/9) | 100% (11/11) | 100% (4/4) | 100% (1/1) |
 | DeployMiniBuildingCollector | 100% (10/10) | 100% (12/12) | 100% (6/6) | 100% (1/1) |
 
-Verified on September 29, 2026 with the toolchain above: 138 tests passed, zero
-failures and zero skips with Ethereum forks at blocks 26,039,501 and 26,073,640
-and the Base fork at block 51,941,900. This includes five fuzz cases with 1,000
-runs each and three stateful invariants
+Verified on October 8, 2026 with the toolchain above: 160 tests passed, zero
+failures and zero skips with Ethereum forks at blocks 26,039,501, 26,073,640,
+and 26,146,887 and the Base fork at block 51,941,900. This includes seven fuzz
+cases with 1,000 runs each and three stateful invariants
 checked over 32,768 actions with zero reverts. The deployment test verifies the
 approval/CREATE nonce sequence, seed funding and configuration/nonce failure
 guards. Formatting checks passed. Production bytecode is below the EVM size
